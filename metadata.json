@@ -1,0 +1,7 @@
+{
+  "name": "Invisible Theremin Pro",
+  "description": "A high-performance gesture-to-audio synthesizer using MediaPipe hand tracking and Web Audio API. Play music using only your hand movements in 3D space.",
+  "requestFramePermissions": [
+    "camera"
+  ]
+}

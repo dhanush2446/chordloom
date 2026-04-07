@@ -1,0 +1,821 @@
+import React, { useRef, useEffect, useState, useCallback } from 'react';
+import { AudioEngine } from '../engine/audioEngine';
+import { ThereminEngine, CalibrationData } from '../engine/thereminEngine';
+import {
+  loadCalibration, saveCalibration, clearCalibration,
+  CALIBRATION_STEPS, computeGestureCalibration,
+} from '../engine/calibration';
+import { GestureController, GestureState } from '../engine/gestureState';
+import { OctaveController } from '../engine/octaveControl';
+import type { TimbreKey } from '../engine/timbres';
+
+interface Props {
+  onUpdate: (
+    freq: number, vol: number, note: string,
+    gestureState: GestureState, octaveBand: string, pinchDist: number,
+  ) => void;
+  timbre: TimbreKey;
+}
+
+export const ThereminCore: React.FC<Props> = ({ onUpdate, timbre }) => {
+  const videoRef = useRef<HTMLVideoElement>(null);
+  const canvasRef = useRef<HTMLCanvasElement>(null);
+  const audioRef = useRef<AudioEngine | null>(null);
+  const engineRef = useRef(new ThereminEngine());
+  const gestureRef = useRef(new GestureController());
+  const octaveRef = useRef(new OctaveController());
+  const destroyedRef = useRef(false);
+
+  // Flick flash animation
+  const flickFlashRef = useRef(0); // opacity 0–1, decays over 150ms
+  const flickFlashStartRef = useRef(0);
+
+  // Calibration state
+  const [calibStep, setCalibStep] = useState(-1);
+  const calibSamplesRef = useRef<any[]>([]);
+  const calibStartRef = useRef(0);
+  const calibDataRef = useRef<Partial<CalibrationData>>({});
+  // Gesture calibration accumulators
+  const gestureCalibRef = useRef<{
+    pinchClosedSamples: number[];
+    pinchOpenSamples: number[];
+    drHighSamples: number[];
+    drLowSamples: number[];
+    flickVelocities: number[];
+    flickPrevY: number;
+    flickPrevT: number;
+  }>({
+    pinchClosedSamples: [],
+    pinchOpenSamples: [],
+    drHighSamples: [],
+    drLowSamples: [],
+    flickVelocities: [],
+    flickPrevY: -1,
+    flickPrevT: 0,
+  });
+
+  // Load saved calibration on mount
+  useEffect(() => {
+    const saved = loadCalibration();
+    if (saved) {
+      engineRef.current.setCalibration(saved);
+      if (saved.pinchThreshold && saved.dynamicRange && saved.flickVelocityThreshold) {
+        gestureRef.current.setCalibration(
+          saved.pinchThreshold,
+          saved.dynamicRange,
+          saved.flickVelocityThreshold,
+        );
+      }
+    }
+  }, []);
+
+  // Audio engine lifecycle — created ONCE
+  useEffect(() => {
+    const audio = new AudioEngine();
+    audio.init();
+    audioRef.current = audio;
+    return () => { audio.dispose(); audioRef.current = null; };
+  }, []);
+
+  // Timbre switching
+  useEffect(() => {
+    if (audioRef.current && audioRef.current.isRunning) {
+      audioRef.current.setTimbre(timbre);
+    }
+  }, [timbre]);
+
+  // ─── MediaPipe + Camera + Processing Loop ──────────────────
+  useEffect(() => {
+    destroyedRef.current = false;
+    let handsInstance: any = null;
+
+    const hands = new (window as any).Hands({
+      locateFile: (f: string) => `https://cdn.jsdelivr.net/npm/@mediapipe/hands/${f}`,
+    });
+
+    hands.setOptions({
+      maxNumHands: 2,
+      modelComplexity: 1,
+      minDetectionConfidence: 0.55,
+      minTrackingConfidence: 0.5,
+    });
+    handsInstance = hands;
+
+    hands.onResults((results: any) => {
+      if (destroyedRef.current || !canvasRef.current) return;
+      const ctx = canvasRef.current.getContext('2d');
+      if (!ctx) return;
+      const { width, height } = canvasRef.current;
+      const audio = audioRef.current;
+      const engine = engineRef.current;
+      const gesture = gestureRef.current;
+      const octave = octaveRef.current;
+      const now = performance.now();
+      const tSec = now / 1000;
+
+      gesture.setCanvasDimensions(width, height);
+
+      // ── Draw: mirrored camera feed (dimmed) ──
+      ctx.save();
+      ctx.clearRect(0, 0, width, height);
+      ctx.scale(-1, 1);
+      ctx.translate(-width, 0);
+      ctx.globalAlpha = 0.35;
+      ctx.drawImage(results.image, 0, 0, width, height);
+      ctx.globalAlpha = 1.0;
+
+      // ── Draw: pitch antenna (right edge) ──
+      ctx.strokeStyle = 'rgba(14,165,233,0.5)';
+      ctx.lineWidth = 4;
+      ctx.beginPath();
+      ctx.moveTo(3, 0);
+      ctx.lineTo(3, height);
+      ctx.stroke();
+
+      // ── Extract hands ──
+      let rightHandLm: any[] | null = null; // user's right = camera 'Left'
+      let leftHandLm: any[] | null = null;  // user's left = camera 'Right'
+      let rightDetected = false;
+      let leftDetected = false;
+      let freq = 0, vol = 0, note = '';
+      let pitchProx = 0;
+      let gState = GestureState.INACTIVE;
+      let octBand = '';
+      let pinchDist = 0;
+
+      if (results.multiHandLandmarks && results.multiHandedness) {
+        for (let i = 0; i < results.multiHandLandmarks.length; i++) {
+          const lm = results.multiHandLandmarks[i];
+          const label: string = results.multiHandedness[i].label;
+
+          if (label === 'Left') {
+            // USER'S RIGHT HAND → PITCH + GESTURES
+            rightHandLm = lm;
+            rightDetected = true;
+          } else if (label === 'Right') {
+            // USER'S LEFT HAND → OCTAVE
+            leftHandLm = lm;
+            leftDetected = true;
+          }
+        }
+      }
+
+      // ── RIGHT HAND PROCESSING ──
+      if (rightDetected && rightHandLm) {
+        gesture.cancelHandLoss();
+
+        // 1. Pitch (always runs, regardless of pinch state)
+        const area = ThereminEngine.computePalmArea(rightHandLm, width, height);
+        const avgZ = ThereminEngine.computeAverageZ(rightHandLm);
+
+        // Handle pitch calibration capture
+        if (calibStep === 0 || calibStep === 1) {
+          _captureCalibSample({ area, z: avgZ }, now);
+        } else {
+          const r = engine.mapPitch(area, avgZ, tSec);
+          freq = r.frequency;
+          note = r.note;
+          pitchProx = r.proximity;
+        }
+
+        // 2. Gesture state machine (pinch + volume + flick)
+        if (calibStep < 0) {
+          const gestureOut = gesture.update(
+            rightHandLm, tSec,
+            audio?.audioContext || null,
+            audio?.gainNode || null,
+          );
+          gState = gestureOut.state;
+          vol = gestureOut.volume;
+          pinchDist = gestureOut.pinchDistance;
+
+          // Handle flick flash
+          if (gestureOut.flickTriggered) {
+            flickFlashRef.current = 0.3;
+            flickFlashStartRef.current = now;
+          }
+
+          // Draw visual feedback
+          _drawGestureVisuals(ctx, rightHandLm, gestureOut, width, height);
+        }
+
+        // Handle gesture calibration steps
+        if (calibStep >= 2 && calibStep <= 6) {
+          _captureGestureCalibSample(rightHandLm, tSec, now, width, height);
+        }
+
+        // Draw hand skeleton (blue — pitch hand)
+        _drawHandSkeleton(ctx, rightHandLm, width, height, '#0ea5e9', 0.5);
+
+      } else {
+        // Right hand lost
+        gesture.onHandLost(now, audio?.audioContext || null, audio?.gainNode || null);
+        gState = gesture.state;
+        const lastPitch = engine.getLastPitch();
+        freq = lastPitch.frequency;
+        note = lastPitch.note;
+      }
+
+      // ── LEFT HAND PROCESSING ──
+      if (leftDetected && leftHandLm) {
+        const wrist = leftHandLm[0];
+
+        if (calibStep < 0) {
+          const octOut = octave.update(wrist.y, timbre);
+          octBand = octOut.noteName;
+
+          // Scale pitch to selected octave
+          if (freq > 0) {
+            freq = OctaveController.scaleToOctave(freq, octOut.baseFrequency);
+            // Update note name for scaled frequency
+            note = _freqToNote(freq);
+          }
+
+          // Draw octave band lines
+          _drawOctaveBands(ctx, octOut, wrist.y, width, height);
+        }
+
+        // Draw hand skeleton (green — octave hand)
+        _drawHandSkeleton(ctx, leftHandLm, width, height, '#10b981', 0.5);
+        const mx = wrist.x;
+        _drawDot(ctx, mx * width, wrist.y * height, '#10b981');
+
+      } else {
+        // Left hand absent — default to middle octave, don't cut sound
+        octBand = '';
+      }
+
+      // ── Update audio ──
+      if (audio && audio.isRunning && calibStep < 0) {
+        // Frequency always updates (even during CUT, per spec)
+        if (freq > 0) {
+          audio.setFrequency(freq);
+        }
+        // Volume is handled by GestureController via direct gainNode access
+        // No additional setVolume call here — the state machine controls it
+      }
+
+      // ── Draw: pitch antenna proximity glow ──
+      if (pitchProx > 0.05) {
+        const glowWidth = pitchProx * 100;
+        const grad = ctx.createLinearGradient(glowWidth, 0, 0, 0);
+        grad.addColorStop(0, 'rgba(14,165,233,0)');
+        grad.addColorStop(1, `rgba(14,165,233,${pitchProx * 0.45})`);
+        ctx.fillStyle = grad;
+        ctx.fillRect(0, 0, glowWidth, height);
+      }
+
+      // ── Draw: current note (large, center) ──
+      if (note && calibStep < 0) {
+        const displayVol = gState === GestureState.ACTIVE ? vol : 0;
+        ctx.fillStyle = `rgba(255,255,255,${0.4 + displayVol * 0.5})`;
+        ctx.font = 'bold 72px monospace';
+        ctx.textAlign = 'center';
+        ctx.textBaseline = 'middle';
+        ctx.fillText(note, width / 2, height / 2);
+
+        // Frequency subtitle
+        ctx.fillStyle = 'rgba(255,255,255,0.3)';
+        ctx.font = '18px monospace';
+        ctx.fillText(`${Math.round(freq)} Hz`, width / 2, height / 2 + 48);
+
+        // Octave band subtitle
+        if (octBand) {
+          ctx.fillStyle = 'rgba(16,185,129,0.5)';
+          ctx.font = '14px monospace';
+          ctx.fillText(`Octave: ${octBand}`, width / 2, height / 2 + 72);
+        }
+      }
+
+      // ── Draw: flick flash overlay ──
+      if (flickFlashRef.current > 0.01) {
+        const elapsed = now - flickFlashStartRef.current;
+        flickFlashRef.current = Math.max(0, 0.3 - (elapsed / 150) * 0.3);
+        ctx.fillStyle = `rgba(255,255,255,${flickFlashRef.current})`;
+        ctx.fillRect(0, 0, width, height);
+      }
+
+      // ── Draw: volume position indicator (right edge circle) ──
+      if (gState === GestureState.ACTIVE || gState === GestureState.CUT) {
+        const volY = (1 - vol) * height; // 0=top (loud), 1=bottom (quiet)
+        // Because canvas is mirrored, x=0 = physical right edge
+        ctx.beginPath();
+        ctx.arc(20, volY, 8, 0, Math.PI * 2);
+        ctx.fillStyle = gState === GestureState.ACTIVE
+          ? 'rgba(14,165,233,0.9)' : 'rgba(100,100,100,0.5)';
+        ctx.fill();
+        ctx.strokeStyle = 'rgba(255,255,255,0.3)';
+        ctx.lineWidth = 1;
+        ctx.stroke();
+      }
+
+      // ── Draw: state indicator text ──
+      if (calibStep < 0) {
+        const stateColors: Record<string, string> = {
+          [GestureState.INACTIVE]: 'rgba(100,100,100,0.5)',
+          [GestureState.CUT]: 'rgba(239,68,68,0.7)',
+          [GestureState.ACTIVE]: 'rgba(34,197,94,0.7)',
+          [GestureState.FLICK_LOCK]: 'rgba(249,115,22,0.7)',
+        };
+        ctx.fillStyle = stateColors[gState] || 'rgba(100,100,100,0.5)';
+        ctx.font = 'bold 11px monospace';
+        ctx.textAlign = 'left';
+        ctx.textBaseline = 'top';
+        // x=width-80 in mirrored coords = physical left, top corner
+        ctx.fillText(gState, width - 100, 16);
+      }
+
+      ctx.restore();
+      onUpdate(freq, vol, note, gState, octBand, pinchDist);
+    });
+
+    // ── Start Camera ──
+    if (videoRef.current) {
+      const camera = new (window as any).Camera(videoRef.current, {
+        onFrame: async () => {
+          if (videoRef.current && !destroyedRef.current) {
+            await hands.send({ image: videoRef.current });
+          }
+        },
+        width: 1280,
+        height: 720,
+      });
+      camera.start();
+    }
+
+    return () => {
+      destroyedRef.current = true;
+      try { handsInstance?.close(); } catch {}
+    };
+  }, []); // Runs ONCE
+
+  // ─── Calibration helpers ────────────────────────────────────
+  const _captureCalibSample = (vals: any, nowMs: number) => {
+    if (calibStartRef.current === 0) {
+      calibStartRef.current = nowMs;
+      calibSamplesRef.current = [];
+    }
+    calibSamplesRef.current.push(vals);
+
+    const step = CALIBRATION_STEPS[calibStep];
+    if (nowMs - calibStartRef.current >= step.duration) {
+      const samples = calibSamplesRef.current;
+
+      if (step.id === 'pitchMin' || step.id === 'pitchMax') {
+        const avgArea = samples.reduce((a: number, b: any) => a + (b.area || 0), 0) / samples.length;
+        const avgZ = samples.reduce((a: number, b: any) => a + (b.z || 0), 0) / samples.length;
+        calibDataRef.current[step.id === 'pitchMin' ? 'pitchMinArea' : 'pitchMaxArea'] = avgArea;
+        calibDataRef.current[step.id === 'pitchMin' ? 'pitchMinZ' : 'pitchMaxZ'] = avgZ;
+      }
+
+      calibStartRef.current = 0;
+      calibSamplesRef.current = [];
+
+      if (calibStep < CALIBRATION_STEPS.length - 1) {
+        setCalibStep(calibStep + 1);
+      } else {
+        _finalizeCalibration();
+      }
+    }
+  };
+
+  const _captureGestureCalibSample = (
+    lm: any[], tSec: number, nowMs: number,
+    w: number, h: number,
+  ) => {
+    if (calibStartRef.current === 0) {
+      calibStartRef.current = nowMs;
+    }
+
+    const step = CALIBRATION_STEPS[calibStep];
+    const gc = gestureCalibRef.current;
+
+    // Compute pinch distance
+    const thumb = lm[4];
+    const indexTip = lm[8];
+    const dx = (thumb.x - indexTip.x) * w;
+    const dy = (thumb.y - indexTip.y) * h;
+    const pinchDist = Math.sqrt(dx * dx + dy * dy);
+
+    // Compute finger avg Y and pinch anchor
+    const fingerAvgY = (lm[12].y + lm[16].y + lm[20].y) / 3;
+    const pinchAnchorY = (lm[4].y + lm[8].y) / 2;
+    const relativeY = fingerAvgY - pinchAnchorY;
+
+    if (step.id === 'pinchClosed') {
+      gc.pinchClosedSamples.push(pinchDist);
+    } else if (step.id === 'pinchOpen') {
+      gc.pinchOpenSamples.push(pinchDist);
+    } else if (step.id === 'drHigh') {
+      gc.drHighSamples.push(relativeY);
+    } else if (step.id === 'drLow') {
+      gc.drLowSamples.push(relativeY);
+    } else if (step.id === 'flickTest') {
+      // Track peak velocity during flick test
+      if (gc.flickPrevT > 0) {
+        const dt = tSec - gc.flickPrevT;
+        if (dt > 0 && dt < 1) {
+          const vel = (fingerAvgY - gc.flickPrevY) / dt;
+          // Detect peak: positive velocity = downward
+          if (vel > 1.0) {
+            // Check if this is a new peak (higher than last)
+            const lastPeak = gc.flickVelocities.length > 0
+              ? gc.flickVelocities[gc.flickVelocities.length - 1] : 0;
+            if (vel > lastPeak || gc.flickVelocities.length === 0) {
+              if (gc.flickVelocities.length < 3) {
+                gc.flickVelocities.push(vel);
+              } else {
+                // Replace the smallest
+                const minIdx = gc.flickVelocities.indexOf(Math.min(...gc.flickVelocities));
+                if (vel > gc.flickVelocities[minIdx]) {
+                  gc.flickVelocities[minIdx] = vel;
+                }
+              }
+            }
+          }
+        }
+      }
+      gc.flickPrevY = fingerAvgY;
+      gc.flickPrevT = tSec;
+    }
+
+    if (nowMs - calibStartRef.current >= step.duration) {
+      calibStartRef.current = 0;
+
+      if (calibStep < CALIBRATION_STEPS.length - 1) {
+        setCalibStep(calibStep + 1);
+      } else {
+        _finalizeCalibration();
+      }
+    }
+  };
+
+  const _finalizeCalibration = () => {
+    const gc = gestureCalibRef.current;
+
+    // Compute gesture calibration values
+    const pinchClosedAvg = gc.pinchClosedSamples.length > 0
+      ? gc.pinchClosedSamples.reduce((a, b) => a + b, 0) / gc.pinchClosedSamples.length
+      : 15;
+    const pinchOpenAvg = gc.pinchOpenSamples.length > 0
+      ? gc.pinchOpenSamples.reduce((a, b) => a + b, 0) / gc.pinchOpenSamples.length
+      : 60;
+    const drHighAvg = gc.drHighSamples.length > 0
+      ? gc.drHighSamples.reduce((a, b) => a + b, 0) / gc.drHighSamples.length
+      : -0.15;
+    const drLowAvg = gc.drLowSamples.length > 0
+      ? gc.drLowSamples.reduce((a, b) => a + b, 0) / gc.drLowSamples.length
+      : 0.15;
+
+    const gestureCalib = computeGestureCalibration(
+      pinchClosedAvg, pinchOpenAvg,
+      drHighAvg, drLowAvg,
+      gc.flickVelocities,
+    );
+
+    const data: CalibrationData = {
+      ...(calibDataRef.current as CalibrationData),
+      pinchThreshold: gestureCalib.pinchThreshold,
+      dynamicRange: gestureCalib.dynamicRange,
+      flickVelocityThreshold: gestureCalib.flickVelocityThreshold,
+    };
+
+    saveCalibration(data);
+    engineRef.current.setCalibration(data);
+    gestureRef.current.setCalibration(
+      gestureCalib.pinchThreshold,
+      gestureCalib.dynamicRange,
+      gestureCalib.flickVelocityThreshold,
+    );
+
+    // Reset
+    calibDataRef.current = {};
+    gestureCalibRef.current = {
+      pinchClosedSamples: [],
+      pinchOpenSamples: [],
+      drHighSamples: [],
+      drLowSamples: [],
+      flickVelocities: [],
+      flickPrevY: -1,
+      flickPrevT: 0,
+    };
+    setCalibStep(-1);
+  };
+
+  const startCalibration = useCallback(() => {
+    calibStartRef.current = 0;
+    calibSamplesRef.current = [];
+    calibDataRef.current = {};
+    gestureCalibRef.current = {
+      pinchClosedSamples: [],
+      pinchOpenSamples: [],
+      drHighSamples: [],
+      drLowSamples: [],
+      flickVelocities: [],
+      flickPrevY: -1,
+      flickPrevT: 0,
+    };
+    setCalibStep(0);
+  }, []);
+
+  const skipCalibration = useCallback(() => {
+    setCalibStep(-1);
+  }, []);
+
+  return (
+    <div className="relative w-full h-full flex items-center justify-center p-4">
+      <div className="relative w-full max-w-5xl aspect-video rounded-3xl overflow-hidden border-4 border-white/5 shadow-2xl bg-black/40">
+        <video ref={videoRef} className="absolute inset-0 w-full h-full object-cover opacity-0 pointer-events-none" playsInline />
+        <canvas ref={canvasRef} width={1280} height={720} className="absolute inset-0 w-full h-full object-cover" />
+
+        {/* Calibration overlay */}
+        {calibStep >= 0 && calibStep < CALIBRATION_STEPS.length && (
+          <div className="absolute inset-0 flex items-center justify-center bg-black/70 backdrop-blur-sm z-30">
+            <div className="bg-slate-900/95 border-2 border-sky-500 p-8 rounded-3xl text-center max-w-md shadow-2xl">
+              <div className="text-sky-400 text-[10px] uppercase tracking-widest font-bold mb-4">
+                Calibration — Step {calibStep + 1} of {CALIBRATION_STEPS.length}
+              </div>
+              <p className="text-white text-lg font-bold mb-4">{CALIBRATION_STEPS[calibStep].instruction}</p>
+              <div className="w-full bg-slate-800 h-2 rounded-full overflow-hidden">
+                <div className="bg-sky-500 h-full transition-all rounded-full"
+                  style={{ width: calibStartRef.current > 0 ? `${Math.min(100, ((performance.now() - calibStartRef.current) / CALIBRATION_STEPS[calibStep].duration) * 100)}%` : '0%' }}
+                />
+              </div>
+              <p className="text-slate-500 text-xs mt-3">Hold your hand steady...</p>
+              <button onClick={skipCalibration} className="mt-6 text-slate-500 hover:text-slate-300 text-xs underline">
+                Skip Calibration
+              </button>
+            </div>
+          </div>
+        )}
+
+        {/* Zone labels */}
+        {calibStep < 0 && (
+          <div className="absolute inset-0 pointer-events-none z-10">
+            <div className="absolute top-12 left-1/2 -translate-x-1/2">
+              <div className="bg-emerald-500/10 text-emerald-400/50 px-4 py-1.5 rounded-full text-[9px] font-black tracking-widest uppercase backdrop-blur-sm border border-emerald-500/20">
+                ↑ Left Hand High = High Octave &nbsp; Low = Low Octave ↓
+              </div>
+            </div>
+            <div className="absolute top-1/2 right-4 -translate-y-1/2 rotate-90 origin-center">
+              <div className="bg-sky-500/10 text-sky-400/50 px-4 py-1.5 rounded-full text-[9px] font-black tracking-widest uppercase backdrop-blur-sm border border-sky-500/20 whitespace-nowrap">
+                ← Push Closer = High Pitch &nbsp; Pull Away = Low Pitch
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* Calibrate button */}
+        {calibStep < 0 && (
+          <button onClick={startCalibration}
+            className="absolute bottom-4 left-4 z-20 px-3 py-1.5 rounded-lg bg-slate-800/80 hover:bg-slate-700/80 text-slate-400 hover:text-white text-[10px] font-bold uppercase tracking-wider border border-white/10 transition-all">
+            Calibrate
+          </button>
+        )}
+      </div>
+    </div>
+  );
+};
+
+// ─── Visual Feedback Drawing ──────────────────────────────────
+
+/**
+ * Draw gesture-specific visual feedback on the canvas.
+ */
+function _drawGestureVisuals(
+  ctx: CanvasRenderingContext2D,
+  landmarks: any[],
+  gestureOut: any,
+  w: number, h: number,
+) {
+  const thumb = landmarks[4];
+  const index = landmarks[8];
+  const thumbX = thumb.x * w;
+  const thumbY = thumb.y * h;
+  const indexX = index.x * w;
+  const indexY = index.y * h;
+
+  // 1. PINCH LINE — between thumb tip and index tip
+  const lineColor = gestureOut.state === GestureState.ACTIVE
+    ? '#22c55e'
+    : gestureOut.state === GestureState.FLICK_LOCK
+      ? '#f97316'
+      : '#ef4444';
+
+  ctx.beginPath();
+  ctx.moveTo(thumbX, thumbY);
+  ctx.lineTo(indexX, indexY);
+  ctx.strokeStyle = lineColor;
+  ctx.lineWidth = 3;
+  ctx.stroke();
+
+  // Pinch indicator dot at midpoint
+  const midX = (thumbX + indexX) / 2;
+  const midY = (thumbY + indexY) / 2;
+  ctx.beginPath();
+  ctx.arc(midX, midY, 5, 0, Math.PI * 2);
+  ctx.fillStyle = lineColor;
+  ctx.fill();
+
+  // 2. DYNAMIC RANGE BOX — default bounding box around the hand
+  const upperLimitY = gestureOut.dynamicRangeUpper * h;
+  const lowerLimitY = gestureOut.dynamicRangeLower * h;
+  const anchorY = gestureOut.stableAnchorY * h;
+
+  // Draw the bounding box
+  const boxLeft = Math.min(thumbX, indexX) - 60;
+  const boxRight = Math.max(thumbX, indexX) + 60;
+
+  ctx.setLineDash([8, 6]);
+  ctx.lineWidth = 1.5;
+
+  // Upper limit line
+  ctx.strokeStyle = 'rgba(255,255,255,0.3)';
+  ctx.beginPath();
+  ctx.moveTo(boxLeft, upperLimitY);
+  ctx.lineTo(boxRight, upperLimitY);
+  ctx.stroke();
+
+  // Lower limit line
+  ctx.beginPath();
+  ctx.moveTo(boxLeft, lowerLimitY);
+  ctx.lineTo(boxRight, lowerLimitY);
+  ctx.stroke();
+
+  // Left and right sides of the box
+  ctx.strokeStyle = 'rgba(255,255,255,0.15)';
+  ctx.beginPath();
+  ctx.moveTo(boxLeft, upperLimitY);
+  ctx.lineTo(boxLeft, lowerLimitY);
+  ctx.stroke();
+
+  ctx.beginPath();
+  ctx.moveTo(boxRight, upperLimitY);
+  ctx.lineTo(boxRight, lowerLimitY);
+  ctx.stroke();
+
+  ctx.setLineDash([]);
+
+  // Anchor line (center reference, subtle)
+  ctx.strokeStyle = 'rgba(255,255,255,0.12)';
+  ctx.lineWidth = 1;
+  ctx.beginPath();
+  ctx.moveTo(boxLeft, anchorY);
+  ctx.lineTo(boxRight, anchorY);
+  ctx.stroke();
+
+  // Labels
+  ctx.fillStyle = 'rgba(255,255,255,0.35)';
+  ctx.font = '9px monospace';
+  ctx.textAlign = 'left';
+  ctx.fillText('LOUD', boxRight + 4, upperLimitY + 3);
+  ctx.fillText('QUIET', boxRight + 4, lowerLimitY + 3);
+
+  // 3. FINGER AVG position indicator inside the box
+  const fingerY = gestureOut.fingerAvgY * h;
+  const fingerMarkerX = (boxLeft + boxRight) / 2;
+
+  // Horizontal line at finger position
+  ctx.strokeStyle = gestureOut.state === GestureState.ACTIVE
+    ? 'rgba(14,165,233,0.6)' : 'rgba(100,100,100,0.3)';
+  ctx.lineWidth = 2;
+  ctx.beginPath();
+  ctx.moveTo(boxLeft + 5, fingerY);
+  ctx.lineTo(boxRight - 5, fingerY);
+  ctx.stroke();
+
+  // Small triangle indicator
+  ctx.fillStyle = gestureOut.state === GestureState.ACTIVE
+    ? 'rgba(14,165,233,0.8)' : 'rgba(100,100,100,0.4)';
+  ctx.beginPath();
+  ctx.moveTo(boxRight - 2, fingerY - 4);
+  ctx.lineTo(boxRight + 6, fingerY);
+  ctx.lineTo(boxRight - 2, fingerY + 4);
+  ctx.closePath();
+  ctx.fill();
+}
+
+/**
+ * Draw octave band lines on the left side of the canvas.
+ */
+function _drawOctaveBands(
+  ctx: CanvasRenderingContext2D,
+  octOut: any,
+  wristY: number,
+  w: number, h: number,
+) {
+  const bands = octOut.bands;
+  const numBands = octOut.bandCount;
+  const activeBand = octOut.bandIndex;
+
+  // Because the canvas is mirrored, x=w = physical left edge
+  const edgeX = w - 10;
+  const labelX = w - 30;
+
+  for (let i = 0; i < numBands; i++) {
+    // Band boundary Y: inverted (high hand = high octave = band at top)
+    const bandY = (1.0 - (i + 1) / numBands) * h;
+    const bandBottomY = (1.0 - i / numBands) * h;
+    const bandCenterY = (bandY + bandBottomY) / 2;
+
+    const isActive = i === activeBand;
+
+    // Band boundary line
+    if (i > 0) {
+      ctx.strokeStyle = isActive || (i - 1) === activeBand
+        ? 'rgba(16,185,129,0.5)' : 'rgba(16,185,129,0.15)';
+      ctx.lineWidth = 1;
+      ctx.beginPath();
+      ctx.moveTo(edgeX - 40, bandY);
+      ctx.lineTo(edgeX, bandY);
+      ctx.stroke();
+    }
+
+    // Band highlight
+    if (isActive) {
+      ctx.fillStyle = 'rgba(16,185,129,0.08)';
+      ctx.fillRect(edgeX - 40, bandY, 40, bandBottomY - bandY);
+    }
+
+    // Band label
+    ctx.fillStyle = isActive ? 'rgba(16,185,129,0.9)' : 'rgba(16,185,129,0.3)';
+    ctx.font = isActive ? 'bold 11px monospace' : '9px monospace';
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.fillText(bands[i].note, labelX, bandCenterY);
+  }
+}
+
+/** Draw a landmark dot with a glow ring */
+function _drawDot(ctx: CanvasRenderingContext2D, x: number, y: number, color: string) {
+  ctx.beginPath();
+  ctx.arc(x, y, 10, 0, Math.PI * 2);
+  ctx.fillStyle = color;
+  ctx.globalAlpha = 0.85;
+  ctx.fill();
+  ctx.globalAlpha = 1.0;
+
+  ctx.beginPath();
+  ctx.arc(x, y, 20, 0, Math.PI * 2);
+  ctx.strokeStyle = color;
+  ctx.lineWidth = 2;
+  ctx.globalAlpha = 0.4;
+  ctx.stroke();
+  ctx.globalAlpha = 1.0;
+}
+
+/** Draw a minimal hand skeleton for visual feedback */
+const HAND_CONNECTIONS = [
+  [0,1],[1,2],[2,3],[3,4],
+  [0,5],[5,6],[6,7],[7,8],
+  [5,9],[9,10],[10,11],[11,12],
+  [9,13],[13,14],[14,15],[15,16],
+  [13,17],[17,18],[18,19],[19,20],
+  [0,17],
+];
+
+function _drawHandSkeleton(
+  ctx: CanvasRenderingContext2D,
+  landmarks: any[],
+  w: number, h: number,
+  color: string,
+  opacity: number
+) {
+  ctx.save();
+  ctx.globalAlpha = opacity;
+  ctx.strokeStyle = color;
+  ctx.lineWidth = 1.5;
+
+  for (const [a, b] of HAND_CONNECTIONS) {
+    const ax = landmarks[a].x * w;
+    const ay = landmarks[a].y * h;
+    const bx = landmarks[b].x * w;
+    const by = landmarks[b].y * h;
+    ctx.beginPath();
+    ctx.moveTo(ax, ay);
+    ctx.lineTo(bx, by);
+    ctx.stroke();
+  }
+
+  ctx.fillStyle = color;
+  for (let i = 0; i < landmarks.length; i++) {
+    const lx = landmarks[i].x * w;
+    const ly = landmarks[i].y * h;
+    ctx.beginPath();
+    ctx.arc(lx, ly, 3, 0, Math.PI * 2);
+    ctx.fill();
+  }
+
+  ctx.restore();
+}
+
+/** Convert frequency to note name */
+const NOTES = ['C', 'C#', 'D', 'D#', 'E', 'F', 'F#', 'G', 'G#', 'A', 'A#', 'B'];
+function _freqToNote(f: number): string {
+  if (f <= 0) return '';
+  const semi = 12 * Math.log2(f / 16.3516);
+  const r = (semi + 0.5) | 0;
+  const n = ((r % 12) + 12) % 12;
+  const oct = (r / 12) | 0;
+  return `${NOTES[n]}${oct}`;
+}
