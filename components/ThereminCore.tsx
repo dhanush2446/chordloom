@@ -115,22 +115,38 @@ export const ThereminCore: React.FC<Props> = ({ onUpdate, timbre }) => {
 
       gesture.setCanvasDimensions(width, height);
 
-      // ── Draw: mirrored camera feed (dimmed) ──
+      // ── Draw: mirrored camera feed ──
       ctx.save();
       ctx.clearRect(0, 0, width, height);
       ctx.scale(-1, 1);
       ctx.translate(-width, 0);
-      ctx.globalAlpha = 0.35;
+      ctx.filter = 'saturate(0.85)';
+      ctx.globalAlpha = 0.45;
       ctx.drawImage(results.image, 0, 0, width, height);
+      ctx.filter = 'none';
       ctx.globalAlpha = 1.0;
 
-      // ── Draw: pitch antenna (right edge) ──
-      ctx.strokeStyle = 'rgba(14,165,233,0.5)';
+      // ── Draw: warm vignette ──
+      const vignette = ctx.createRadialGradient(width/2, height/2, height*0.2, width/2, height/2, height*0.8);
+      vignette.addColorStop(0, 'rgba(74,28,16,0)');
+      vignette.addColorStop(1, 'rgba(74,28,16,0.25)');
+      ctx.fillStyle = vignette;
+      ctx.fillRect(0, 0, width, height);
+
+      // ── Draw: pitch antenna (right edge) — gold ──
+      const antennaGrad = ctx.createLinearGradient(3, 0, 3, height);
+      antennaGrad.addColorStop(0, 'rgba(201,168,76,0)');
+      antennaGrad.addColorStop(0.3, 'rgba(201,168,76,0.15)');
+      antennaGrad.addColorStop(0.7, 'rgba(201,168,76,0.15)');
+      antennaGrad.addColorStop(1, 'rgba(201,168,76,0)');
+      ctx.strokeStyle = antennaGrad;
       ctx.lineWidth = 4;
+      ctx.filter = 'blur(3px)';
       ctx.beginPath();
       ctx.moveTo(3, 0);
       ctx.lineTo(3, height);
       ctx.stroke();
+      ctx.filter = 'none';
 
       // ── Extract hands ──
       let rightHandLm: any[] | null = null; // user's right = camera 'Left'
@@ -204,8 +220,8 @@ export const ThereminCore: React.FC<Props> = ({ onUpdate, timbre }) => {
           _captureGestureCalibSample(rightHandLm, tSec, now, width, height);
         }
 
-        // Draw hand skeleton (blue — pitch hand)
-        _drawHandSkeleton(ctx, rightHandLm, width, height, '#0ea5e9', 0.5);
+        // Draw hand skeleton (gold — pitch hand)
+        _drawHandSkeleton(ctx, rightHandLm, width, height, '#C9A84C', 0.5);
 
       } else {
         // Right hand lost
@@ -235,10 +251,10 @@ export const ThereminCore: React.FC<Props> = ({ onUpdate, timbre }) => {
           _drawOctaveBands(ctx, octOut, wrist.y, width, height);
         }
 
-        // Draw hand skeleton (green — octave hand)
-        _drawHandSkeleton(ctx, leftHandLm, width, height, '#10b981', 0.5);
+        // Draw hand skeleton (forest — octave hand)
+        _drawHandSkeleton(ctx, leftHandLm, width, height, '#3A6B43', 0.5);
         const mx = wrist.x;
-        _drawDot(ctx, mx * width, wrist.y * height, '#10b981');
+        _drawDot(ctx, mx * width, wrist.y * height, '#3A6B43');
 
       } else {
         // Left hand absent — default to middle octave, don't cut sound
@@ -255,12 +271,12 @@ export const ThereminCore: React.FC<Props> = ({ onUpdate, timbre }) => {
         // No additional setVolume call here — the state machine controls it
       }
 
-      // ── Draw: pitch antenna proximity glow ──
+      // ── Draw: pitch antenna proximity glow (gold) ──
       if (pitchProx > 0.05) {
         const glowWidth = pitchProx * 100;
         const grad = ctx.createLinearGradient(glowWidth, 0, 0, 0);
-        grad.addColorStop(0, 'rgba(14,165,233,0)');
-        grad.addColorStop(1, `rgba(14,165,233,${pitchProx * 0.45})`);
+        grad.addColorStop(0, 'rgba(201,168,76,0)');
+        grad.addColorStop(1, `rgba(201,168,76,${pitchProx * 0.35})`);
         ctx.fillStyle = grad;
         ctx.fillRect(0, 0, glowWidth, height);
       }
@@ -268,21 +284,21 @@ export const ThereminCore: React.FC<Props> = ({ onUpdate, timbre }) => {
       // ── Draw: current note (large, center) ──
       if (note && calibStep < 0) {
         const displayVol = gState === GestureState.ACTIVE ? vol : 0;
-        ctx.fillStyle = `rgba(255,255,255,${0.4 + displayVol * 0.5})`;
-        ctx.font = 'bold 72px monospace';
+        ctx.fillStyle = `rgba(201,168,76,${0.3 + displayVol * 0.5})`;
+        ctx.font = 'bold 72px "JetBrains Mono", monospace';
         ctx.textAlign = 'center';
         ctx.textBaseline = 'middle';
         ctx.fillText(note, width / 2, height / 2);
 
         // Frequency subtitle
-        ctx.fillStyle = 'rgba(255,255,255,0.3)';
-        ctx.font = '18px monospace';
+        ctx.fillStyle = 'rgba(176,125,84,0.4)';
+        ctx.font = '18px "JetBrains Mono", monospace';
         ctx.fillText(`${Math.round(freq)} Hz`, width / 2, height / 2 + 48);
 
         // Octave band subtitle
         if (octBand) {
-          ctx.fillStyle = 'rgba(16,185,129,0.5)';
-          ctx.font = '14px monospace';
+          ctx.fillStyle = 'rgba(58,107,67,0.5)';
+          ctx.font = '14px "JetBrains Mono", monospace';
           ctx.fillText(`Octave: ${octBand}`, width / 2, height / 2 + 72);
         }
       }
@@ -291,20 +307,19 @@ export const ThereminCore: React.FC<Props> = ({ onUpdate, timbre }) => {
       if (flickFlashRef.current > 0.01) {
         const elapsed = now - flickFlashStartRef.current;
         flickFlashRef.current = Math.max(0, 0.3 - (elapsed / 150) * 0.3);
-        ctx.fillStyle = `rgba(255,255,255,${flickFlashRef.current})`;
+        ctx.fillStyle = `rgba(250,247,240,${flickFlashRef.current})`;
         ctx.fillRect(0, 0, width, height);
       }
 
       // ── Draw: volume position indicator (right edge circle) ──
       if (gState === GestureState.ACTIVE || gState === GestureState.CUT) {
-        const volY = (1 - vol) * height; // 0=top (loud), 1=bottom (quiet)
-        // Because canvas is mirrored, x=0 = physical right edge
+        const volY = (1 - vol) * height;
         ctx.beginPath();
         ctx.arc(20, volY, 8, 0, Math.PI * 2);
         ctx.fillStyle = gState === GestureState.ACTIVE
-          ? 'rgba(14,165,233,0.9)' : 'rgba(100,100,100,0.5)';
+          ? 'rgba(201,168,76,0.9)' : 'rgba(176,125,84,0.4)';
         ctx.fill();
-        ctx.strokeStyle = 'rgba(255,255,255,0.3)';
+        ctx.strokeStyle = 'rgba(250,247,240,0.3)';
         ctx.lineWidth = 1;
         ctx.stroke();
       }
@@ -312,16 +327,15 @@ export const ThereminCore: React.FC<Props> = ({ onUpdate, timbre }) => {
       // ── Draw: state indicator text ──
       if (calibStep < 0) {
         const stateColors: Record<string, string> = {
-          [GestureState.INACTIVE]: 'rgba(100,100,100,0.5)',
-          [GestureState.CUT]: 'rgba(239,68,68,0.7)',
-          [GestureState.ACTIVE]: 'rgba(34,197,94,0.7)',
-          [GestureState.FLICK_LOCK]: 'rgba(249,115,22,0.7)',
+          [GestureState.INACTIVE]: 'rgba(176,125,84,0.5)',
+          [GestureState.CUT]: 'rgba(125,28,58,0.7)',
+          [GestureState.ACTIVE]: 'rgba(201,168,76,0.8)',
+          [GestureState.FLICK_LOCK]: 'rgba(160,114,42,0.7)',
         };
-        ctx.fillStyle = stateColors[gState] || 'rgba(100,100,100,0.5)';
-        ctx.font = 'bold 11px monospace';
+        ctx.fillStyle = stateColors[gState] || 'rgba(176,125,84,0.5)';
+        ctx.font = 'bold 11px "Inter", sans-serif';
         ctx.textAlign = 'left';
         ctx.textBaseline = 'top';
-        // x=width-80 in mirrored coords = physical left, top corner
         ctx.fillText(gState, width - 100, 16);
       }
 
@@ -523,26 +537,24 @@ export const ThereminCore: React.FC<Props> = ({ onUpdate, timbre }) => {
   }, []);
 
   return (
-    <div className="relative w-full h-full flex items-center justify-center p-4">
-      <div className="relative w-full max-w-5xl aspect-video rounded-3xl overflow-hidden border-4 border-white/5 shadow-2xl bg-black/40">
-        <video ref={videoRef} className="absolute inset-0 w-full h-full object-cover opacity-0 pointer-events-none" playsInline />
-        <canvas ref={canvasRef} width={1280} height={720} className="absolute inset-0 w-full h-full object-cover" />
+    <div style={{ position: 'relative', width: '100%', height: '100%' }}>
+      <div style={{ position: 'relative', width: '100%', height: '100%', overflow: 'hidden', background: 'rgba(74,28,16,0.05)' }}>
+        <video ref={videoRef} style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', objectFit: 'cover', opacity: 0, pointerEvents: 'none' }} playsInline />
+        <canvas ref={canvasRef} width={1280} height={720} style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', objectFit: 'cover' }} />
 
         {/* Calibration overlay */}
         {calibStep >= 0 && calibStep < CALIBRATION_STEPS.length && (
-          <div className="absolute inset-0 flex items-center justify-center bg-black/70 backdrop-blur-sm z-30">
-            <div className="bg-slate-900/95 border-2 border-sky-500 p-8 rounded-3xl text-center max-w-md shadow-2xl">
-              <div className="text-sky-400 text-[10px] uppercase tracking-widest font-bold mb-4">
+          <div style={{ position: 'absolute', inset: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', background: 'rgba(74,28,16,0.7)', backdropFilter: 'blur(8px)', zIndex: 30 }}>
+            <div style={{ background: 'rgba(250,247,240,0.95)', border: '2px solid var(--color-gold)', padding: 32, borderRadius: 24, textAlign: 'center', maxWidth: 420, boxShadow: 'var(--shadow-2xl)' }}>
+              <div style={{ fontFamily: 'var(--font-ui)', fontWeight: 600, fontSize: 10, textTransform: 'uppercase', letterSpacing: '0.15em', color: 'var(--color-gold)', marginBottom: 16 }}>
                 Calibration — Step {calibStep + 1} of {CALIBRATION_STEPS.length}
               </div>
-              <p className="text-white text-lg font-bold mb-4">{CALIBRATION_STEPS[calibStep].instruction}</p>
-              <div className="w-full bg-slate-800 h-2 rounded-full overflow-hidden">
-                <div className="bg-sky-500 h-full transition-all rounded-full"
-                  style={{ width: calibStartRef.current > 0 ? `${Math.min(100, ((performance.now() - calibStartRef.current) / CALIBRATION_STEPS[calibStep].duration) * 100)}%` : '0%' }}
-                />
+              <p style={{ fontFamily: 'var(--font-display)', fontWeight: 700, fontSize: '1.1rem', color: 'var(--color-mahogany)', marginBottom: 16 }}>{CALIBRATION_STEPS[calibStep].instruction}</p>
+              <div style={{ width: '100%', height: 6, background: 'var(--color-parchment)', borderRadius: 999, overflow: 'hidden' }}>
+                <div style={{ height: '100%', borderRadius: 999, background: 'linear-gradient(90deg, var(--color-gold), var(--color-gold-light))', transition: 'width 100ms', width: calibStartRef.current > 0 ? `${Math.min(100, ((performance.now() - calibStartRef.current) / CALIBRATION_STEPS[calibStep].duration) * 100)}%` : '0%' }} />
               </div>
-              <p className="text-slate-500 text-xs mt-3">Hold your hand steady...</p>
-              <button onClick={skipCalibration} className="mt-6 text-slate-500 hover:text-slate-300 text-xs underline">
+              <p style={{ fontFamily: 'var(--font-body)', fontStyle: 'italic', fontSize: 12, color: 'var(--color-cedar)', marginTop: 12 }}>Hold your hand steady...</p>
+              <button onClick={skipCalibration} style={{ marginTop: 20, fontFamily: 'var(--font-ui)', fontSize: 12, color: 'var(--color-cedar)', textDecoration: 'underline', background: 'none', border: 'none', cursor: 'pointer' }}>
                 Skip Calibration
               </button>
             </div>
@@ -551,14 +563,14 @@ export const ThereminCore: React.FC<Props> = ({ onUpdate, timbre }) => {
 
         {/* Zone labels */}
         {calibStep < 0 && (
-          <div className="absolute inset-0 pointer-events-none z-10">
-            <div className="absolute top-12 left-1/2 -translate-x-1/2">
-              <div className="bg-emerald-500/10 text-emerald-400/50 px-4 py-1.5 rounded-full text-[9px] font-black tracking-widest uppercase backdrop-blur-sm border border-emerald-500/20">
+          <div style={{ position: 'absolute', inset: 0, pointerEvents: 'none', zIndex: 10 }}>
+            <div style={{ position: 'absolute', top: 48, left: '50%', transform: 'translateX(-50%)' }}>
+              <div style={{ background: 'rgba(44,82,51,0.08)', color: 'rgba(58,107,67,0.5)', padding: '6px 16px', borderRadius: 999, fontSize: 9, fontFamily: 'var(--font-ui)', fontWeight: 700, letterSpacing: '0.1em', textTransform: 'uppercase', backdropFilter: 'blur(4px)', border: '1px solid rgba(44,82,51,0.15)' }}>
                 ↑ Left Hand High = High Octave &nbsp; Low = Low Octave ↓
               </div>
             </div>
-            <div className="absolute top-1/2 right-4 -translate-y-1/2 rotate-90 origin-center">
-              <div className="bg-sky-500/10 text-sky-400/50 px-4 py-1.5 rounded-full text-[9px] font-black tracking-widest uppercase backdrop-blur-sm border border-sky-500/20 whitespace-nowrap">
+            <div style={{ position: 'absolute', top: '50%', right: 16, transform: 'translateY(-50%) rotate(90deg)', transformOrigin: 'center' }}>
+              <div style={{ background: 'rgba(201,168,76,0.08)', color: 'rgba(201,168,76,0.5)', padding: '6px 16px', borderRadius: 999, fontSize: 9, fontFamily: 'var(--font-ui)', fontWeight: 700, letterSpacing: '0.1em', textTransform: 'uppercase', backdropFilter: 'blur(4px)', border: '1px solid rgba(201,168,76,0.15)', whiteSpace: 'nowrap' }}>
                 ← Push Closer = High Pitch &nbsp; Pull Away = Low Pitch
               </div>
             </div>
@@ -568,7 +580,7 @@ export const ThereminCore: React.FC<Props> = ({ onUpdate, timbre }) => {
         {/* Calibrate button */}
         {calibStep < 0 && (
           <button onClick={startCalibration}
-            className="absolute bottom-4 left-4 z-20 px-3 py-1.5 rounded-lg bg-slate-800/80 hover:bg-slate-700/80 text-slate-400 hover:text-white text-[10px] font-bold uppercase tracking-wider border border-white/10 transition-all">
+            style={{ position: 'absolute', bottom: 16, left: 16, zIndex: 20, padding: '6px 12px', borderRadius: 8, background: 'rgba(250,247,240,0.7)', backdropFilter: 'blur(8px)', color: 'var(--color-cedar)', fontSize: 10, fontFamily: 'var(--font-ui)', fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.08em', border: '1px solid rgba(201,168,76,0.25)', cursor: 'pointer', transition: 'all 150ms' }}>
             Calibrate
           </button>
         )}
@@ -597,10 +609,10 @@ function _drawGestureVisuals(
 
   // 1. PINCH LINE — between thumb tip and index tip
   const lineColor = gestureOut.state === GestureState.ACTIVE
-    ? '#22c55e'
+    ? '#C9A84C'
     : gestureOut.state === GestureState.FLICK_LOCK
-      ? '#f97316'
-      : '#ef4444';
+      ? '#A0722A'
+      : '#7D1C3A';
 
   ctx.beginPath();
   ctx.moveTo(thumbX, thumbY);
@@ -630,7 +642,7 @@ function _drawGestureVisuals(
   ctx.lineWidth = 1.5;
 
   // Upper limit line
-  ctx.strokeStyle = 'rgba(255,255,255,0.3)';
+  ctx.strokeStyle = 'rgba(250,247,240,0.25)';
   ctx.beginPath();
   ctx.moveTo(boxLeft, upperLimitY);
   ctx.lineTo(boxRight, upperLimitY);
@@ -643,7 +655,7 @@ function _drawGestureVisuals(
   ctx.stroke();
 
   // Left and right sides of the box
-  ctx.strokeStyle = 'rgba(255,255,255,0.15)';
+  ctx.strokeStyle = 'rgba(250,247,240,0.12)';
   ctx.beginPath();
   ctx.moveTo(boxLeft, upperLimitY);
   ctx.lineTo(boxLeft, lowerLimitY);
@@ -657,7 +669,7 @@ function _drawGestureVisuals(
   ctx.setLineDash([]);
 
   // Anchor line (center reference, subtle)
-  ctx.strokeStyle = 'rgba(255,255,255,0.12)';
+  ctx.strokeStyle = 'rgba(250,247,240,0.08)';
   ctx.lineWidth = 1;
   ctx.beginPath();
   ctx.moveTo(boxLeft, anchorY);
@@ -665,8 +677,8 @@ function _drawGestureVisuals(
   ctx.stroke();
 
   // Labels
-  ctx.fillStyle = 'rgba(255,255,255,0.35)';
-  ctx.font = '9px monospace';
+  ctx.fillStyle = 'rgba(201,168,76,0.4)';
+  ctx.font = '9px "JetBrains Mono", monospace';
   ctx.textAlign = 'left';
   ctx.fillText('LOUD', boxRight + 4, upperLimitY + 3);
   ctx.fillText('QUIET', boxRight + 4, lowerLimitY + 3);
@@ -677,7 +689,7 @@ function _drawGestureVisuals(
 
   // Horizontal line at finger position
   ctx.strokeStyle = gestureOut.state === GestureState.ACTIVE
-    ? 'rgba(14,165,233,0.6)' : 'rgba(100,100,100,0.3)';
+    ? 'rgba(201,168,76,0.6)' : 'rgba(176,125,84,0.3)';
   ctx.lineWidth = 2;
   ctx.beginPath();
   ctx.moveTo(boxLeft + 5, fingerY);
@@ -686,7 +698,7 @@ function _drawGestureVisuals(
 
   // Small triangle indicator
   ctx.fillStyle = gestureOut.state === GestureState.ACTIVE
-    ? 'rgba(14,165,233,0.8)' : 'rgba(100,100,100,0.4)';
+    ? 'rgba(201,168,76,0.8)' : 'rgba(176,125,84,0.4)';
   ctx.beginPath();
   ctx.moveTo(boxRight - 2, fingerY - 4);
   ctx.lineTo(boxRight + 6, fingerY);
@@ -723,7 +735,7 @@ function _drawOctaveBands(
     // Band boundary line
     if (i > 0) {
       ctx.strokeStyle = isActive || (i - 1) === activeBand
-        ? 'rgba(16,185,129,0.5)' : 'rgba(16,185,129,0.15)';
+        ? 'rgba(58,107,67,0.5)' : 'rgba(58,107,67,0.15)';
       ctx.lineWidth = 1;
       ctx.beginPath();
       ctx.moveTo(edgeX - 40, bandY);
@@ -733,13 +745,13 @@ function _drawOctaveBands(
 
     // Band highlight
     if (isActive) {
-      ctx.fillStyle = 'rgba(16,185,129,0.08)';
+      ctx.fillStyle = 'rgba(58,107,67,0.08)';
       ctx.fillRect(edgeX - 40, bandY, 40, bandBottomY - bandY);
     }
 
     // Band label
-    ctx.fillStyle = isActive ? 'rgba(16,185,129,0.9)' : 'rgba(16,185,129,0.3)';
-    ctx.font = isActive ? 'bold 11px monospace' : '9px monospace';
+    ctx.fillStyle = isActive ? 'rgba(58,107,67,0.9)' : 'rgba(58,107,67,0.3)';
+    ctx.font = isActive ? 'bold 11px "JetBrains Mono", monospace' : '9px "JetBrains Mono", monospace';
     ctx.textAlign = 'center';
     ctx.textBaseline = 'middle';
     ctx.fillText(bands[i].note, labelX, bandCenterY);

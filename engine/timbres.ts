@@ -131,6 +131,12 @@ export const TIMBRE_PROFILES = {
       0.5000, 0.0000, 0.2500, 0.0000, 0.0000,
       0.0000, 0.0000, 0.0000, 0.0000, 0.0000, 0.0000
     ]
+  },
+
+  acousticBrass: {
+    label: 'Acoustic Brass',
+    description: 'Sampled acoustic brass instrument',
+    harmonics: [0, 1] // Unused for sample playback, but required to satisfy the type
   }
 
 } as const;

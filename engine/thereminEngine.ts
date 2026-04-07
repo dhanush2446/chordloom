@@ -25,11 +25,10 @@ export interface CalibrationData {
   flickVelocityThreshold?: number;
 }
 
-const MIN_FREQ = 65.41;     // C2
-const MAX_FREQ = 2093.00;   // C7 — 5 full octaves
-const LOG_MIN = Math.log2(MIN_FREQ);
-const LOG_MAX = Math.log2(MAX_FREQ);
-const LOG_RANGE = LOG_MAX - LOG_MIN;
+const MIN_FREQ = 130.81;  // C3 (3rd Octave start)
+const MAX_FREQ = 261.63;  // C4 (4th Octave start — exactly one octave range)
+const FREQ_RANGE = MAX_FREQ - MIN_FREQ;
+
 const NOTES = ['C', 'C#', 'D', 'D#', 'E', 'F', 'F#', 'G', 'G#', 'A', 'A#', 'B'];
 const INV_21 = 1 / 21;
 
@@ -172,8 +171,8 @@ export class ThereminEngine {
     const clamped = rawDepth < 0 ? 0 : rawDepth > 1 ? 1 : rawDepth;
     const proximity = Math.pow(clamped, this.fieldExponent);
 
-    // Logarithmic frequency mapping: [0,1] → [C2, C7]
-    const rawFreq = Math.pow(2, LOG_MIN + proximity * LOG_RANGE);
+    // Linear frequency mapping: [0,1] → [C3, C4] (equal frequency difference)
+    const rawFreq = MIN_FREQ + (proximity * FREQ_RANGE);
 
     // Single adaptive filter (heavily smoothed)
     const filtered = this.pitchFilter.filter(rawFreq, tSec);
