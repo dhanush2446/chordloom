@@ -2,12 +2,16 @@ import React, { useState, useCallback, useRef, useEffect } from 'react';
 import { ThereminCore } from './ThereminCore';
 import { TIMBRE_PROFILES, TIMBRE_KEYS, TimbreKey } from '../engine/timbres';
 import { GestureState } from '../engine/gestureState';
+import { AuthUser } from '../types';
+import { ProfileDropdown } from './ProfileDropdown';
 
 interface Props {
   onExit: () => void;
+  user: AuthUser;
+  onLogout: () => void;
 }
 
-export const InstrumentPage: React.FC<Props> = ({ onExit }) => {
+export const InstrumentPage: React.FC<Props> = ({ onExit, user, onLogout }) => {
   const [stats, setStats] = useState({
     freq: 0, vol: 0, note: '',
     gestureState: GestureState.INACTIVE as GestureState,
@@ -20,6 +24,46 @@ export const InstrumentPage: React.FC<Props> = ({ onExit }) => {
     octaveSpan: 0.5,
     pitchExponent: 1.2,
   });
+  
+  // Recording State
+  const [isRecording, setIsRecording] = useState(false);
+  const [recordingBlob, setRecordingBlob] = useState<Blob | null>(null);
+  const [recordingTitle, setRecordingTitle] = useState('');
+  const [isSavingRecord, setIsSavingRecord] = useState(false);
+
+  const handleRecordingComplete = useCallback((blob: Blob) => {
+    setRecordingBlob(blob);
+    setRecordingTitle('Session ' + new Date().toLocaleTimeString());
+  }, []);
+
+  const handleSaveRecording = async () => {
+    if (!recordingBlob) return;
+    setIsSavingRecord(true);
+    try {
+      const reader = new FileReader();
+      reader.readAsDataURL(recordingBlob);
+      reader.onloadend = async () => {
+        const base64data = reader.result;
+        const token = localStorage.getItem('cl_token');
+        
+        await fetch('/api/recordings', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` },
+          body: JSON.stringify({
+            title: recordingTitle || 'Untitled Session',
+            audioData: base64data
+          })
+        });
+        
+        setRecordingBlob(null);
+        setRecordingTitle('');
+        setIsSavingRecord(false);
+      };
+    } catch(e) {
+      console.error('Failed to save recording:', e);
+      setIsSavingRecord(false);
+    }
+  };
 
   const handleUpdate = useCallback((
     freq: number, vol: number, note: string,
@@ -92,6 +136,28 @@ export const InstrumentPage: React.FC<Props> = ({ onExit }) => {
 
 
         <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+          {/* Record Button */}
+          <button
+            onClick={() => setIsRecording(!isRecording)}
+            style={{
+              display: 'flex', alignItems: 'center', gap: 6,
+              background: isRecording ? 'rgba(255,0,0,0.1)' : 'transparent',
+              border: `1px solid ${isRecording ? 'rgba(255,0,0,0.3)' : 'rgba(201,168,76,0.3)'}`,
+              padding: '6px 14px', borderRadius: 20, color: isRecording ? '#d13a3a' : 'var(--color-mahogany)',
+              fontFamily: 'var(--font-ui)', fontWeight: 600, fontSize: '0.85rem',
+              transition: 'all 0.2s', marginRight: 12
+            }}
+          >
+            <div style={{ 
+              width: 10, height: 10, borderRadius: '50%', 
+              background: isRecording ? '#d13a3a' : 'var(--color-oak)',
+              boxShadow: isRecording ? '0 0 6px #d13a3a' : 'none',
+              animation: isRecording ? 'pulse 1.5s infinite' : 'none' 
+            }} />
+            {isRecording ? 'Recording...' : 'Record'}
+          </button>
+
+          <ProfileDropdown user={user} onLogout={onLogout} style={{ marginRight: 8 }} />
           <button className="btn-icon" onClick={() => setShowSettings(!showSettings)} aria-label="Settings">
             <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><circle cx="12" cy="12" r="3" /><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.32 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z" /></svg>
           </button>
@@ -189,7 +255,13 @@ export const InstrumentPage: React.FC<Props> = ({ onExit }) => {
 
       {/* ── Main Playing Area ── */}
       <div className="playing-area">
-        <ThereminCore onUpdate={handleUpdate} timbre={timbre} settings={settings} />
+        <ThereminCore 
+          onUpdate={handleUpdate} 
+          timbre={timbre} 
+          settings={settings}
+          isRecording={isRecording}
+          onRecordingComplete={handleRecordingComplete}
+        />
       </div>
 
       {/* ── Bottom Note Card ── */}
@@ -264,6 +336,70 @@ export const InstrumentPage: React.FC<Props> = ({ onExit }) => {
           </div>
         </div>
       )}
+
+      {/* ── Save Recording Modal ── */}
+      {recordingBlob && (
+        <>
+          {/* Modal Backdrop */}
+          <div style={{
+            position: 'fixed', top: 0, left: 0, right: 0, bottom: 0,
+            background: 'rgba(0,0,0,0.4)', backdropFilter: 'blur(4px)',
+            zIndex: 999
+          }} />
+          <div style={{
+            position: 'fixed', top: '50%', left: '50%', transform: 'translate(-50%, -50%)',
+            background: 'rgba(250,247,240,0.98)', backdropFilter: 'blur(24px)', zIndex: 1000,
+            padding: 'var(--space-4)', borderRadius: 'var(--radius-xl)',
+            border: '1px solid rgba(201,168,76,0.3)', boxShadow: 'var(--shadow-2xl)',
+            width: 400, maxWidth: '90vw',
+            animation: 'fadeIn 300ms cubic-bezier(0.2,0.8,0.2,1)'
+          }}>
+            <h2 style={{ fontFamily: 'var(--font-display)', fontSize: '1.5rem', color: 'var(--color-mahogany)', marginBottom: 8 }}>Save Recording</h2>
+            <p style={{ fontFamily: 'var(--font-body)', fontSize: '0.9rem', color: 'var(--color-walnut)', marginBottom: 24 }}>
+              Give your session a name to save it to your profile.
+            </p>
+            
+            <div style={{ position: 'relative', marginBottom: 24, borderBottom: '1px solid var(--color-oak)' }}>
+              <svg style={{ position: 'absolute', left: 12, top: 12, color: 'var(--color-cedar)' }} width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M12 2v20M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6"/></svg>
+              <input 
+                autoFocus
+                type="text" 
+                value={recordingTitle} 
+                onChange={e => setRecordingTitle(e.target.value)} 
+                placeholder="Recording Title"
+                style={{ width: '100%', outline: 'none', background: 'transparent', border: 'none', padding: '12px 12px 12px 40px', fontFamily: 'var(--font-ui)', fontSize: '1rem', color: 'var(--color-mahogany)' }}
+              />
+            </div>
+
+            <div style={{ display: 'flex', gap: 12 }}>
+              <button 
+                className="btn-outline" 
+                style={{ flex: 1, padding: '12px 0', fontSize: '0.95rem' }}
+                onClick={() => { setRecordingBlob(null); setRecordingTitle(''); }}
+                disabled={isSavingRecord}
+              >
+                Discard
+              </button>
+              <button 
+                className="btn-gold" 
+                style={{ flex: 1, padding: '12px 0', fontSize: '0.95rem', justifyContent: 'center' }}
+                onClick={handleSaveRecording}
+                disabled={isSavingRecord}
+              >
+                {isSavingRecord ? 'Saving...' : 'Save Audio'}
+              </button>
+            </div>
+          </div>
+        </>
+      )}
+
+      <style>{`
+        @keyframes pulse {
+          0% { box-shadow: 0 0 0 0 rgba(209, 58, 58, 0.4); }
+          70% { box-shadow: 0 0 0 6px rgba(209, 58, 58, 0); }
+          100% { box-shadow: 0 0 0 0 rgba(209, 58, 58, 0); }
+        }
+      `}</style>
     </div>
   );
 };

@@ -45,6 +45,11 @@ export class AudioEngine {
   private sampleInstances: Map<string, SampleInstance> = new Map();
   private isSampleLoaded = false;
 
+  // Recording
+  private destNode: MediaStreamAudioDestinationNode | null = null;
+  private mediaRecorder: MediaRecorder | null = null;
+  private recordedChunks: Blob[] = [];
+
   private _currentTimbre: TimbreKey = 'warmTheremin';
   private _isRunning = false;
 
@@ -206,6 +211,51 @@ export class AudioEngine {
     if (!this.ctx || !this._gestureGainNode) return;
     const v = Math.max(0, Math.min(0.5, target));
     this._gestureGainNode.gain.setTargetAtTime(v, this.ctx.currentTime, timeConstant);
+  }
+
+  // ── Recording Interface ───────────────────────────────────────
+  
+  startRecording(): void {
+    if (!this.ctx || !this._gestureGainNode) return;
+    
+    this.destNode = this.ctx.createMediaStreamDestination();
+    this._gestureGainNode.connect(this.destNode);
+
+    const stream = this.destNode.stream;
+    
+    try {
+      this.mediaRecorder = new MediaRecorder(stream, { mimeType: 'audio/webm' });
+    } catch(e) {
+      this.mediaRecorder = new MediaRecorder(stream); // fallback
+    }
+
+    this.recordedChunks = [];
+    this.mediaRecorder.ondataavailable = (e) => {
+      if (e.data.size > 0) this.recordedChunks.push(e.data);
+    };
+    
+    this.mediaRecorder.start(100);
+  }
+
+  stopRecording(): Promise<Blob | null> {
+    return new Promise((resolve) => {
+      if (!this.mediaRecorder || this.mediaRecorder.state === 'inactive') {
+        resolve(null);
+        return;
+      }
+
+      this.mediaRecorder.onstop = () => {
+        const blob = new Blob(this.recordedChunks, { type: 'audio/webm' });
+        this.recordedChunks = [];
+        if (this.destNode) {
+          this._gestureGainNode?.disconnect(this.destNode);
+          this.destNode = null;
+        }
+        resolve(blob);
+      };
+
+      this.mediaRecorder.stop();
+    });
   }
 
   dispose(): void {

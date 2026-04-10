@@ -9,14 +9,18 @@ import { GallerySection } from './landing/GallerySection';
 import { CTASection } from './landing/CTASection';
 import { Footer } from './landing/Footer';
 
+import { AuthUser } from '../types';
+
 interface Props {
   onLaunch: () => void;
+  user: AuthUser;
+  onLogout: () => void;
 }
 
-export const LandingPage: React.FC<Props> = ({ onLaunch }) => {
+export const LandingPage: React.FC<Props> = ({ onLaunch, user, onLogout }) => {
   return (
     <>
-      <Navbar onLaunch={onLaunch} />
+      <Navbar onLaunch={onLaunch} user={user} onLogout={onLogout} />
       <HeroSection onStart={onLaunch} />
       <FeaturesSection />
       <HowItWorksSection />

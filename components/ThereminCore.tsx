@@ -15,9 +15,11 @@ interface Props {
   ) => void;
   timbre: TimbreKey;
   settings?: { octaveSpan: number, pitchExponent: number };
+  isRecording?: boolean;
+  onRecordingComplete?: (blob: Blob) => void;
 }
 
-export const ThereminCore: React.FC<Props> = ({ onUpdate, timbre, settings }) => {
+export const ThereminCore: React.FC<Props> = ({ onUpdate, timbre, settings, isRecording, onRecordingComplete }) => {
   const videoRef = useRef<HTMLVideoElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const audioRef = useRef<AudioEngine | null>(null);
@@ -88,6 +90,20 @@ export const ThereminCore: React.FC<Props> = ({ onUpdate, timbre, settings }) =>
       audioRef.current.setTimbre(timbre);
     }
   }, [timbre]);
+
+  // Recording monitor
+  useEffect(() => {
+    if (!audioRef.current) return;
+    if (isRecording) {
+      audioRef.current.startRecording();
+    } else {
+      audioRef.current.stopRecording().then(blob => {
+        if (blob && onRecordingComplete) {
+          onRecordingComplete(blob);
+        }
+      });
+    }
+  }, [isRecording, onRecordingComplete]);
 
   // ─── MediaPipe + Camera + Processing Loop ──────────────────
   useEffect(() => {

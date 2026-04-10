@@ -1,7 +1,12 @@
 import React, { useState, useEffect } from 'react';
 
+import { AuthUser } from '../../types';
+import { ProfileDropdown } from '../ProfileDropdown';
+
 interface Props {
   onLaunch: () => void;
+  user: AuthUser;
+  onLogout: () => void;
 }
 
 const WaveLogo = () => (
@@ -17,7 +22,7 @@ const WaveLogo = () => (
   </svg>
 );
 
-export const Navbar: React.FC<Props> = ({ onLaunch }) => {
+export const Navbar: React.FC<Props> = ({ onLaunch, user, onLogout }) => {
   const [scrolled, setScrolled] = useState(false);
   const [menuOpen, setMenuOpen] = useState(false);
 
@@ -69,6 +74,8 @@ export const Navbar: React.FC<Props> = ({ onLaunch }) => {
             <path d="M5 12h14M12 5l7 7-7 7" />
           </svg>
         </button>
+        
+        <ProfileDropdown user={user} onLogout={onLogout} />
       </div>
 
       {/* Mobile drawer */}

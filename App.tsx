@@ -1,13 +1,75 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
+import { AuthPage } from './components/AuthPage';
 import { LandingPage } from './components/LandingPage';
 import { InstrumentPage } from './components/InstrumentPage';
+import { AuthUser } from './types';
 
 const App: React.FC = () => {
   const [view, setView] = useState<'landing' | 'instrument'>('landing');
+  const [user, setUser] = useState<AuthUser | null>(null);
+  const [authChecked, setAuthChecked] = useState(false);
 
+  // On mount, check for existing JWT in localStorage
+  useEffect(() => {
+    const token = localStorage.getItem('cl_token');
+    if (!token) {
+      setAuthChecked(true);
+      return;
+    }
+
+    // Verify token with backend
+    fetch('/api/auth/me', {
+      headers: { Authorization: `Bearer ${token}` },
+    })
+      .then(res => {
+        if (!res.ok) throw new Error('Invalid token');
+        return res.json();
+      })
+      .then(data => {
+        setUser(data.user);
+      })
+      .catch(() => {
+        // Token expired or invalid — clear it
+        localStorage.removeItem('cl_token');
+      })
+      .finally(() => setAuthChecked(true));
+  }, []);
+
+  const handleAuth = (authUser: AuthUser, token: string) => {
+    localStorage.setItem('cl_token', token);
+    setUser(authUser);
+  };
+
+  const handleLogout = () => {
+    localStorage.removeItem('cl_token');
+    setUser(null);
+    setView('landing');
+  };
+
+  // Show nothing until we've checked auth status (prevents flash)
+  if (!authChecked) {
+    return (
+      <div style={{
+        minHeight: '100vh',
+        display: 'flex',
+        alignItems: 'center',
+        justifyContent: 'center',
+        background: 'var(--color-ivory)',
+      }}>
+        <div className="auth-spinner" style={{ width: 32, height: 32 }} />
+      </div>
+    );
+  }
+
+  // Not logged in → show auth page
+  if (!user) {
+    return <AuthPage onAuth={handleAuth} />;
+  }
+
+  // Logged in → show app
   return view === 'landing'
-    ? <LandingPage onLaunch={() => setView('instrument')} />
-    : <InstrumentPage onExit={() => setView('landing')} />;
+    ? <LandingPage onLaunch={() => setView('instrument')} user={user} onLogout={handleLogout} />
+    : <InstrumentPage onExit={() => setView('landing')} user={user} onLogout={handleLogout} />;
 };
 
 export default App;

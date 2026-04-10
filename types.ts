@@ -1,5 +1,11 @@
 import type { GestureState } from './engine/gestureState';
 
+export interface AuthUser {
+  id: string;
+  name: string;
+  email: string;
+}
+
 export interface HandData {
   isDetected: boolean;
   handedness: 'Left' | 'Right';
