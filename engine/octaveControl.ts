@@ -23,25 +23,25 @@ interface OctaveBandDef {
 }
 
 const BANDS_5_C2: OctaveBandDef[] = [
-  { note: 'C2', freq: FREQ_C2 },
-  { note: 'C3', freq: FREQ_C3 },
-  { note: 'C4', freq: FREQ_C4 },
-  { note: 'C5', freq: FREQ_C5 },
-  { note: 'C6', freq: FREQ_C6 },
+  { note: '2', freq: FREQ_C2 },
+  { note: '3', freq: FREQ_C3 },
+  { note: '4', freq: FREQ_C4 },
+  { note: '5', freq: FREQ_C5 },
+  { note: '6', freq: FREQ_C6 },
 ];
 
 const BANDS_4_C2: OctaveBandDef[] = [
-  { note: 'C2', freq: FREQ_C2 },
-  { note: 'C3', freq: FREQ_C3 },
-  { note: 'C4', freq: FREQ_C4 },
-  { note: 'C5', freq: FREQ_C5 },
+  { note: '2', freq: FREQ_C2 },
+  { note: '3', freq: FREQ_C3 },
+  { note: '4', freq: FREQ_C4 },
+  { note: '5', freq: FREQ_C5 },
 ];
 
 const BANDS_4_C3: OctaveBandDef[] = [
-  { note: 'C3', freq: FREQ_C3 },
-  { note: 'C4', freq: FREQ_C4 },
-  { note: 'C5', freq: FREQ_C5 },
-  { note: 'C6', freq: FREQ_C6 },
+  { note: '3', freq: FREQ_C3 },
+  { note: '4', freq: FREQ_C4 },
+  { note: '5', freq: FREQ_C5 },
+  { note: '6', freq: FREQ_C6 },
 ];
 
 // ── Timbre → band mapping ───────────────────────────────────────
@@ -93,8 +93,9 @@ export class OctaveController {
    *
    * @param wristY - Normalized wrist Y position (0 = top, 1 = bottom)
    * @param timbreKey - Current timbre (determines band count)
+   * @param span - Normalized height of the active octave detection area (default 0.5)
    */
-  update(wristY: number, timbreKey: TimbreKey): OctaveOutput {
+  update(wristY: number, timbreKey: TimbreKey, span: number = 0.5): OctaveOutput {
     // Update bands if timbre changed
     if (timbreKey !== this.currentTimbre) {
       this.currentTimbre = timbreKey;
@@ -107,9 +108,15 @@ export class OctaveController {
 
     const numBands = this.bands.length;
 
-    // Map Y to band index: top of screen (Y=0) = highest octave, bottom (Y=1) = lowest
+    // Map Y to band index within the specific span
+    // Center the span around Y = 0.5
+    const minY = 0.5 - span / 2;
+    const maxY = 0.5 + span / 2;
+    const clampedY = Math.max(minY, Math.min(maxY, wristY));
+    const normalizedY = (clampedY - minY) / span;
+
     // Invert so that high hand = high octave
-    let rawBand = Math.floor((1.0 - wristY) * numBands);
+    let rawBand = Math.floor((1.0 - normalizedY) * numBands);
     rawBand = rawBand < 0 ? 0 : rawBand >= numBands ? numBands - 1 : rawBand;
 
     // Hysteresis: only change after 8 consecutive frames of stable new band

@@ -16,6 +16,10 @@ export const InstrumentPage: React.FC<Props> = ({ onExit }) => {
   const [timbre, setTimbre] = useState<TimbreKey>('warmTheremin');
   const [showHelp, setShowHelp] = useState(false);
   const [showSettings, setShowSettings] = useState(false);
+  const [settings, setSettings] = useState({
+    octaveSpan: 0.5,
+    pitchExponent: 1.2,
+  });
 
   const handleUpdate = useCallback((
     freq: number, vol: number, note: string,
@@ -85,10 +89,7 @@ export const InstrumentPage: React.FC<Props> = ({ onExit }) => {
           <span style={{ fontFamily: 'var(--font-display)', fontWeight: 700, fontSize: '1.1rem', color: 'var(--color-mahogany)' }}>Chord Loom</span>
         </div>
 
-        <div className="topbar-note" aria-live="polite">
-          <div className="note-name">{stats.note || '—'}</div>
-          <div className="note-freq">{stats.freq ? `${stats.freq} Hz` : ''}</div>
-        </div>
+
 
         <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
           <button className="btn-icon" onClick={() => setShowSettings(!showSettings)} aria-label="Settings">
@@ -163,16 +164,32 @@ export const InstrumentPage: React.FC<Props> = ({ onExit }) => {
           <>
             <div className="panel-divider" />
             <div className="panel-section-label">Settings</div>
-            <p style={{ fontFamily: 'var(--font-ui)', fontSize: 'var(--text-caption)', color: 'var(--color-cedar)' }}>
-              Adjustments are applied via calibration flow in the main view.
+            <p style={{ fontFamily: 'var(--font-ui)', fontSize: 'var(--text-caption)', color: 'var(--color-cedar)', marginBottom: '12px' }}>
+              Adjust visual bounds and response sensitivity.
             </p>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
+              <div>
+                <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.75rem', color: 'var(--color-cedar)', marginBottom: '4px' }}>
+                  <span>Octave Span</span>
+                  <span>{Math.round(settings.octaveSpan * 100)}%</span>
+                </div>
+                <input type="range" min="0.2" max="1.0" step="0.05" value={settings.octaveSpan} onChange={(e) => setSettings(s => ({ ...s, octaveSpan: parseFloat(e.target.value) }))} style={{ width: '100%', accentColor: 'var(--color-gold)' }} />
+              </div>
+              <div>
+                <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.75rem', color: 'var(--color-cedar)', marginBottom: '4px' }}>
+                  <span>Pitch Responsiveness</span>
+                  <span>{settings.pitchExponent.toFixed(1)}</span>
+                </div>
+                <input type="range" min="0.5" max="3.0" step="0.1" value={settings.pitchExponent} onChange={(e) => setSettings(s => ({ ...s, pitchExponent: parseFloat(e.target.value) }))} style={{ width: '100%', accentColor: 'var(--color-gold)' }} />
+              </div>
+            </div>
           </>
         )}
       </div>
 
       {/* ── Main Playing Area ── */}
       <div className="playing-area">
-        <ThereminCore onUpdate={handleUpdate} timbre={timbre} />
+        <ThereminCore onUpdate={handleUpdate} timbre={timbre} settings={settings} />
       </div>
 
       {/* ── Bottom Note Card ── */}

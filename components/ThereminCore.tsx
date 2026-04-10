@@ -12,12 +12,12 @@ import type { TimbreKey } from '../engine/timbres';
 interface Props {
   onUpdate: (
     freq: number, vol: number, note: string,
-    gestureState: GestureState, octaveBand: string, pinchDist: number,
   ) => void;
   timbre: TimbreKey;
+  settings?: { octaveSpan: number, pitchExponent: number };
 }
 
-export const ThereminCore: React.FC<Props> = ({ onUpdate, timbre }) => {
+export const ThereminCore: React.FC<Props> = ({ onUpdate, timbre, settings }) => {
   const videoRef = useRef<HTMLVideoElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const audioRef = useRef<AudioEngine | null>(null);
@@ -25,6 +25,11 @@ export const ThereminCore: React.FC<Props> = ({ onUpdate, timbre }) => {
   const gestureRef = useRef(new GestureController());
   const octaveRef = useRef(new OctaveController());
   const destroyedRef = useRef(false);
+  const settingsRef = useRef(settings);
+
+  useEffect(() => {
+    settingsRef.current = settings;
+  }, [settings]);
 
   // Flick flash animation
   const flickFlashRef = useRef(0); // opacity 0–1, decays over 150ms
@@ -184,6 +189,8 @@ export const ThereminCore: React.FC<Props> = ({ onUpdate, timbre }) => {
         const area = ThereminEngine.computePalmArea(rightHandLm, width, height);
         const avgZ = ThereminEngine.computeAverageZ(rightHandLm);
 
+        engine.setFieldExponent(settingsRef.current?.pitchExponent ?? 1.2);
+
         // Handle pitch calibration capture
         if (calibStep === 0 || calibStep === 1) {
           _captureCalibSample({ area, z: avgZ }, now);
@@ -234,10 +241,12 @@ export const ThereminCore: React.FC<Props> = ({ onUpdate, timbre }) => {
 
       // ── LEFT HAND PROCESSING ──
       if (leftDetected && leftHandLm) {
-        const wrist = leftHandLm[0];
+        const span = settingsRef.current?.octaveSpan ?? 0.5;
+        // Point of reference for octave is average of index, middle, ring, and pinky roots (MCPs)
+        const octRefY = (leftHandLm[5].y + leftHandLm[9].y + leftHandLm[13].y + leftHandLm[17].y) / 4;
 
         if (calibStep < 0) {
-          const octOut = octave.update(wrist.y, timbre);
+          const octOut = octave.update(octRefY, timbre, span);
           octBand = octOut.noteName;
 
           // Scale pitch to selected octave
@@ -248,13 +257,13 @@ export const ThereminCore: React.FC<Props> = ({ onUpdate, timbre }) => {
           }
 
           // Draw octave band lines
-          _drawOctaveBands(ctx, octOut, wrist.y, width, height);
+          _drawOctaveBands(ctx, octOut, span, width, height);
         }
 
         // Draw hand skeleton (forest — octave hand)
         _drawHandSkeleton(ctx, leftHandLm, width, height, '#3A6B43', 0.5);
-        const mx = wrist.x;
-        _drawDot(ctx, mx * width, wrist.y * height, '#3A6B43');
+        const refX = (leftHandLm[5].x + leftHandLm[9].x + leftHandLm[13].x + leftHandLm[17].x) / 4;
+        _drawDot(ctx, refX * width, octRefY * height, '#3A6B43');
 
       } else {
         // Left hand absent — default to middle octave, don't cut sound
@@ -281,27 +290,7 @@ export const ThereminCore: React.FC<Props> = ({ onUpdate, timbre }) => {
         ctx.fillRect(0, 0, glowWidth, height);
       }
 
-      // ── Draw: current note (large, center) ──
-      if (note && calibStep < 0) {
-        const displayVol = gState === GestureState.ACTIVE ? vol : 0;
-        ctx.fillStyle = `rgba(201,168,76,${0.3 + displayVol * 0.5})`;
-        ctx.font = 'bold 72px "JetBrains Mono", monospace';
-        ctx.textAlign = 'center';
-        ctx.textBaseline = 'middle';
-        ctx.fillText(note, width / 2, height / 2);
 
-        // Frequency subtitle
-        ctx.fillStyle = 'rgba(176,125,84,0.4)';
-        ctx.font = '18px "JetBrains Mono", monospace';
-        ctx.fillText(`${Math.round(freq)} Hz`, width / 2, height / 2 + 48);
-
-        // Octave band subtitle
-        if (octBand) {
-          ctx.fillStyle = 'rgba(58,107,67,0.5)';
-          ctx.font = '14px "JetBrains Mono", monospace';
-          ctx.fillText(`Octave: ${octBand}`, width / 2, height / 2 + 72);
-        }
-      }
 
       // ── Draw: flick flash overlay ──
       if (flickFlashRef.current > 0.01) {
@@ -713,7 +702,7 @@ function _drawGestureVisuals(
 function _drawOctaveBands(
   ctx: CanvasRenderingContext2D,
   octOut: any,
-  wristY: number,
+  span: number,
   w: number, h: number,
 ) {
   const bands = octOut.bands;
@@ -724,10 +713,15 @@ function _drawOctaveBands(
   const edgeX = w - 10;
   const labelX = w - 30;
 
+  const minY = 0.5 - span / 2;
+
   for (let i = 0; i < numBands; i++) {
     // Band boundary Y: inverted (high hand = high octave = band at top)
-    const bandY = (1.0 - (i + 1) / numBands) * h;
-    const bandBottomY = (1.0 - i / numBands) * h;
+    const normalizedTop = 1.0 - (i + 1) / numBands;
+    const normalizedBottom = 1.0 - i / numBands;
+
+    const bandY = (minY + normalizedTop * span) * h;
+    const bandBottomY = (minY + normalizedBottom * span) * h;
     const bandCenterY = (bandY + bandBottomY) / 2;
 
     const isActive = i === activeBand;
