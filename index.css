@@ -1121,6 +1121,174 @@ ol {
   box-shadow: inset 3px 0 0 var(--color-gold);
 }
 
+/* Multi-select (orchestra) state */
+.inst-timbre-btn.selected {
+  background: linear-gradient(135deg, rgba(44, 82, 51, 0.15), rgba(44, 82, 51, 0.05));
+  border: 1px solid rgba(58, 107, 67, 0.50);
+  color: var(--color-forest);
+  font-weight: 600;
+  box-shadow: inset 3px 0 0 var(--color-forest-light);
+  position: relative;
+}
+
+.inst-timbre-btn .timbre-check {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  background: var(--color-forest-light);
+  color: white;
+  font-size: 10px;
+  font-weight: 700;
+  margin-right: 6px;
+  flex-shrink: 0;
+}
+
+/* Orchestra Mode Badge */
+.orchestra-badge {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 12px;
+  border-radius: var(--radius-full);
+  background: linear-gradient(135deg, rgba(44, 82, 51, 0.15), rgba(58, 107, 67, 0.08));
+  border: 1px solid rgba(58, 107, 67, 0.35);
+  font-family: var(--font-ui);
+  font-weight: 600;
+  font-size: 0.75rem;
+  color: var(--color-forest);
+  margin-bottom: 10px;
+  animation: fadeIn 300ms var(--ease-musical) both;
+}
+
+.orchestra-badge-icon {
+  font-size: 14px;
+}
+
+.orchestra-badge-count {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 20px;
+  height: 20px;
+  border-radius: 10px;
+  background: var(--color-forest-light);
+  color: white;
+  font-size: 0.7rem;
+  font-weight: 700;
+  padding: 0 6px;
+}
+
+/* Orchestra Chips */
+.orchestra-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  max-height: 120px;
+  overflow-y: auto;
+}
+
+.orchestra-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 4px 8px 4px 10px;
+  border-radius: var(--radius-full);
+  background: rgba(58, 107, 67, 0.10);
+  border: 1px solid rgba(58, 107, 67, 0.25);
+  font-family: var(--font-ui);
+  font-size: 0.7rem;
+  font-weight: 500;
+  color: var(--color-forest);
+  white-space: nowrap;
+  animation: scaleIn 200ms var(--ease-bounce) both;
+}
+
+.orchestra-chip-remove {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  background: rgba(125, 28, 58, 0.12);
+  color: var(--color-burgundy);
+  font-size: 12px;
+  font-weight: 700;
+  border: none;
+  cursor: pointer;
+  line-height: 1;
+  padding: 0;
+  transition: all var(--duration-fast) var(--ease-smooth);
+}
+
+.orchestra-chip-remove:hover {
+  background: rgba(125, 28, 58, 0.25);
+  transform: scale(1.15);
+}
+
+/* MIDI Export Button */
+.btn-midi-export {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 6px 14px;
+  border-radius: 20px;
+  background: linear-gradient(135deg, rgba(44, 82, 51, 0.12), rgba(58, 107, 67, 0.06));
+  border: 1px solid rgba(58, 107, 67, 0.35);
+  color: var(--color-forest);
+  font-family: var(--font-ui);
+  font-weight: 600;
+  font-size: 0.8rem;
+  cursor: pointer;
+  transition: all var(--duration-fast) var(--ease-smooth);
+  margin-right: 8px;
+}
+
+.btn-midi-export:hover {
+  background: linear-gradient(135deg, rgba(44, 82, 51, 0.20), rgba(58, 107, 67, 0.12));
+  border-color: rgba(58, 107, 67, 0.55);
+  transform: scale(1.03);
+}
+
+.btn-midi-export:active {
+  transform: scale(0.97);
+}
+
+/* MIDI Export Toast */
+.midi-export-toast {
+  position: fixed;
+  bottom: 100px;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 300;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 12px 24px;
+  border-radius: var(--radius-full);
+  background: var(--color-forest);
+  color: white;
+  font-family: var(--font-ui);
+  font-weight: 600;
+  font-size: 0.85rem;
+  box-shadow: var(--shadow-xl);
+  animation: toastSlideUp 300ms var(--ease-bounce) both;
+}
+
+@keyframes toastSlideUp {
+  from {
+    opacity: 0;
+    transform: translateX(-50%) translateY(20px);
+  }
+  to {
+    opacity: 1;
+    transform: translateX(-50%) translateY(0);
+  }
+}
+
 /* Pinch state badge */
 .state-badge {
   display: inline-flex;

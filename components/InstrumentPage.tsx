@@ -1,7 +1,8 @@
-import React, { useState, useCallback, useRef, useEffect } from 'react';
+import React, { useState, useCallback, useRef, useEffect, useMemo } from 'react';
 import { ThereminCore } from './ThereminCore';
 import { TIMBRE_PROFILES, TIMBRE_KEYS, TimbreKey } from '../engine/timbres';
 import { GestureState } from '../engine/gestureState';
+import { downloadMidi } from '../engine/midiExporter';
 import { AuthUser } from '../types';
 import { ProfileDropdown } from './ProfileDropdown';
 
@@ -17,24 +18,64 @@ export const InstrumentPage: React.FC<Props> = ({ onExit, user, onLogout }) => {
     gestureState: GestureState.INACTIVE as GestureState,
     octaveBand: '', pinchDist: 0,
   });
-  const [timbre, setTimbre] = useState<TimbreKey>('warmTheremin');
+  const [selectedTimbres, setSelectedTimbres] = useState<Set<TimbreKey>>(new Set(['warmTheremin']));
   const [showHelp, setShowHelp] = useState(false);
   const [showSettings, setShowSettings] = useState(false);
   const [settings, setSettings] = useState({
     octaveSpan: 0.5,
     pitchExponent: 1.2,
   });
+
+  // Computed timbres array (stable reference via useMemo)
+  const timbresArray = useMemo(() => Array.from(selectedTimbres), [selectedTimbres]);
+  const isOrchestraMode = selectedTimbres.size > 1;
   
   // Recording State
   const [isRecording, setIsRecording] = useState(false);
   const [recordingBlob, setRecordingBlob] = useState<Blob | null>(null);
   const [recordingTitle, setRecordingTitle] = useState('');
   const [isSavingRecord, setIsSavingRecord] = useState(false);
+  
+  // MIDI State
+  const [midiBlob, setMidiBlob] = useState<Blob | null>(null);
+  const [showMidiToast, setShowMidiToast] = useState(false);
 
-  const handleRecordingComplete = useCallback((blob: Blob) => {
-    setRecordingBlob(blob);
-    setRecordingTitle('Session ' + new Date().toLocaleTimeString());
+  const handleTimbreClick = useCallback((key: TimbreKey, ctrlKey: boolean) => {
+    setSelectedTimbres(prev => {
+      if (ctrlKey) {
+        // Ctrl+Click: toggle in/out of set
+        const next = new Set(prev);
+        if (next.has(key)) {
+          // Don't allow deselecting the last one
+          if (next.size > 1) next.delete(key);
+        } else {
+          next.add(key);
+        }
+        return next;
+      } else {
+        // Regular click: single select
+        return new Set([key]);
+      }
+    });
   }, []);
+
+  const removeTimbre = useCallback((key: TimbreKey) => {
+    setSelectedTimbres(prev => {
+      if (prev.size <= 1) return prev; // Can't remove the last one
+      const next = new Set(prev);
+      next.delete(key);
+      return next;
+    });
+  }, []);
+
+  const clearToSingle = useCallback(() => {
+    setSelectedTimbres(prev => {
+      const first = prev.values().next().value || 'warmTheremin';
+      return new Set([first] as TimbreKey[]);
+    });
+  }, []);
+
+
 
   const handleSaveRecording = async () => {
     if (!recordingBlob) return;
@@ -64,6 +105,23 @@ export const InstrumentPage: React.FC<Props> = ({ onExit, user, onLogout }) => {
       setIsSavingRecord(false);
     }
   };
+
+  const handleRecordingComplete = useCallback((blob: Blob) => {
+    setRecordingBlob(blob);
+    setRecordingTitle('Session ' + new Date().toLocaleTimeString());
+  }, []);
+
+  const handleMidiComplete = useCallback((blob: Blob) => {
+    setMidiBlob(blob);
+  }, []);
+
+  const handleExportMidi = useCallback(() => {
+    if (!midiBlob) return;
+    const timestamp = new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19);
+    downloadMidi(midiBlob, `chord-loom-${timestamp}.mid`);
+    setShowMidiToast(true);
+    setTimeout(() => setShowMidiToast(false), 3000);
+  }, [midiBlob]);
 
   const handleUpdate = useCallback((
     freq: number, vol: number, note: string,
@@ -145,7 +203,7 @@ export const InstrumentPage: React.FC<Props> = ({ onExit, user, onLogout }) => {
               border: `1px solid ${isRecording ? 'rgba(255,0,0,0.3)' : 'rgba(201,168,76,0.3)'}`,
               padding: '6px 14px', borderRadius: 20, color: isRecording ? '#d13a3a' : 'var(--color-mahogany)',
               fontFamily: 'var(--font-ui)', fontWeight: 600, fontSize: '0.85rem',
-              transition: 'all 0.2s', marginRight: 12
+              transition: 'all 0.2s', marginRight: 4
             }}
           >
             <div style={{ 
@@ -156,6 +214,22 @@ export const InstrumentPage: React.FC<Props> = ({ onExit, user, onLogout }) => {
             }} />
             {isRecording ? 'Recording...' : 'Record'}
           </button>
+
+          {/* Export MIDI Button */}
+          {midiBlob && (
+            <button
+              className="btn-midi-export"
+              onClick={handleExportMidi}
+              title="Download MIDI file of your last recording"
+            >
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round">
+                <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
+                <polyline points="7 10 12 15 17 10" />
+                <line x1="12" y1="15" x2="12" y2="3" />
+              </svg>
+              MIDI
+            </button>
+          )}
 
           <ProfileDropdown user={user} onLogout={onLogout} style={{ marginRight: 8 }} />
           <button className="btn-icon" onClick={() => setShowSettings(!showSettings)} aria-label="Settings">
@@ -173,19 +247,71 @@ export const InstrumentPage: React.FC<Props> = ({ onExit, user, onLogout }) => {
       {/* ── Left Panel ── */}
       <div className="side-panel side-panel-left">
         <div className="panel-section-label">Timbre</div>
+
+        {/* Orchestra Mode Badge */}
+        {isOrchestraMode && (
+          <div className="orchestra-badge">
+            <span className="orchestra-badge-icon">🎻</span>
+            <span>Orchestra Mode</span>
+            <span className="orchestra-badge-count">{selectedTimbres.size}</span>
+          </div>
+        )}
+
+        {/* Hint text */}
+        <p style={{ fontFamily: 'var(--font-ui)', fontSize: '0.65rem', color: 'var(--color-cedar)', marginBottom: 8, opacity: 0.7 }}>
+          Ctrl+Click to layer multiple instruments
+        </p>
+
         {TIMBRE_KEYS.map((key) => (
           <button
             key={key}
-            className={`inst-timbre-btn ${timbre === key ? 'active' : ''}`}
-            onClick={() => setTimbre(key)}
-            aria-pressed={timbre === key}
+            className={`inst-timbre-btn ${selectedTimbres.has(key) ? (selectedTimbres.size === 1 ? 'active' : 'selected') : ''}`}
+            onClick={(e) => handleTimbreClick(key, e.ctrlKey || e.metaKey)}
+            aria-pressed={selectedTimbres.has(key)}
           >
+            {selectedTimbres.has(key) && selectedTimbres.size > 1 && (
+              <span className="timbre-check">✓</span>
+            )}
             {TIMBRE_PROFILES[key].label}
           </button>
         ))}
-        {timbre && (
+
+        {/* Selected instrument chips */}
+        {isOrchestraMode && (
+          <>
+            <div className="panel-divider" />
+            <div className="panel-section-label">Selected Instruments</div>
+            <div className="orchestra-chips">
+              {timbresArray.map((key) => (
+                <div key={key} className="orchestra-chip">
+                  <span>{TIMBRE_PROFILES[key].label}</span>
+                  <button
+                    className="orchestra-chip-remove"
+                    onClick={() => removeTimbre(key)}
+                    aria-label={`Remove ${TIMBRE_PROFILES[key].label}`}
+                  >
+                    ×
+                  </button>
+                </div>
+              ))}
+            </div>
+            <button
+              onClick={clearToSingle}
+              style={{
+                marginTop: 8, fontFamily: 'var(--font-ui)', fontSize: '0.7rem',
+                color: 'var(--color-cedar)', textDecoration: 'underline',
+                background: 'none', border: 'none', cursor: 'pointer',
+              }}
+            >
+              Clear to Single
+            </button>
+          </>
+        )}
+
+        {/* Description for the primary timbre */}
+        {!isOrchestraMode && selectedTimbres.size === 1 && (
           <p style={{ fontFamily: 'var(--font-body)', fontStyle: 'italic', fontSize: '0.75rem', color: 'var(--color-cedar)', marginTop: 8 }}>
-            {TIMBRE_PROFILES[timbre].description}
+            {TIMBRE_PROFILES[timbresArray[0]].description}
           </p>
         )}
 
@@ -257,10 +383,11 @@ export const InstrumentPage: React.FC<Props> = ({ onExit, user, onLogout }) => {
       <div className="playing-area">
         <ThereminCore 
           onUpdate={handleUpdate} 
-          timbre={timbre} 
+          timbres={timbresArray}
           settings={settings}
           isRecording={isRecording}
           onRecordingComplete={handleRecordingComplete}
+          onMidiComplete={handleMidiComplete}
         />
       </div>
 
@@ -400,6 +527,16 @@ export const InstrumentPage: React.FC<Props> = ({ onExit, user, onLogout }) => {
           100% { box-shadow: 0 0 0 0 rgba(209, 58, 58, 0); }
         }
       `}</style>
+
+      {/* MIDI Export Success Toast */}
+      {showMidiToast && (
+        <div className="midi-export-toast">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round">
+            <polyline points="20 6 9 17 4 12" />
+          </svg>
+          MIDI file downloaded!
+        </div>
+      )}
     </div>
   );
 };

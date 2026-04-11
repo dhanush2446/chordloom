@@ -7,19 +7,21 @@ import {
 } from '../engine/calibration';
 import { GestureController, GestureState } from '../engine/gestureState';
 import { OctaveController } from '../engine/octaveControl';
+import { MidiRecorder } from '../engine/midiExporter';
 import type { TimbreKey } from '../engine/timbres';
 
 interface Props {
   onUpdate: (
     freq: number, vol: number, note: string,
   ) => void;
-  timbre: TimbreKey;
+  timbres: TimbreKey[];  // Orchestra mode: array of selected timbres
   settings?: { octaveSpan: number, pitchExponent: number };
   isRecording?: boolean;
   onRecordingComplete?: (blob: Blob) => void;
+  onMidiComplete?: (blob: Blob) => void;
 }
 
-export const ThereminCore: React.FC<Props> = ({ onUpdate, timbre, settings, isRecording, onRecordingComplete }) => {
+export const ThereminCore: React.FC<Props> = ({ onUpdate, timbres, settings, isRecording, onRecordingComplete, onMidiComplete }) => {
   const videoRef = useRef<HTMLVideoElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const audioRef = useRef<AudioEngine | null>(null);
@@ -28,6 +30,11 @@ export const ThereminCore: React.FC<Props> = ({ onUpdate, timbre, settings, isRe
   const octaveRef = useRef(new OctaveController());
   const destroyedRef = useRef(false);
   const settingsRef = useRef(settings);
+  const midiRef = useRef(new MidiRecorder());
+  const prevGestureStateRef = useRef<GestureState>(GestureState.INACTIVE);
+  const lastFreqRef = useRef(0);
+  const lastVolRef = useRef(0);
+  const timbresRef = useRef(timbres);
 
   useEffect(() => {
     settingsRef.current = settings;
@@ -84,26 +91,38 @@ export const ThereminCore: React.FC<Props> = ({ onUpdate, timbre, settings, isRe
     return () => { audio.dispose(); audioRef.current = null; };
   }, []);
 
-  // Timbre switching
+  useEffect(() => {
+    timbresRef.current = timbres;
+  }, [timbres]);
+
+  // Timbre switching (multi-timbre / orchestra mode)
   useEffect(() => {
     if (audioRef.current && audioRef.current.isRunning) {
-      audioRef.current.setTimbre(timbre);
+      audioRef.current.setMultiTimbre(timbres);
     }
-  }, [timbre]);
+  }, [timbres]);
 
-  // Recording monitor
+  // Recording monitor (audio + MIDI recording in sync)
   useEffect(() => {
     if (!audioRef.current) return;
     if (isRecording) {
       audioRef.current.startRecording();
+      midiRef.current.startRecording();
     } else {
+      // Stop MIDI recording first
+      midiRef.current.stopRecording();
+      if (midiRef.current.hasEvents && onMidiComplete) {
+        const midiBlob = midiRef.current.exportMidi(timbresRef.current);
+        onMidiComplete(midiBlob);
+      }
+
       audioRef.current.stopRecording().then(blob => {
         if (blob && onRecordingComplete) {
           onRecordingComplete(blob);
         }
       });
     }
-  }, [isRecording, onRecordingComplete]);
+  }, [isRecording, onRecordingComplete, onMidiComplete]);
 
   // ─── MediaPipe + Camera + Processing Loop ──────────────────
   useEffect(() => {
@@ -262,7 +281,7 @@ export const ThereminCore: React.FC<Props> = ({ onUpdate, timbre, settings, isRe
         const octRefY = (leftHandLm[5].y + leftHandLm[9].y + leftHandLm[13].y + leftHandLm[17].y) / 4;
 
         if (calibStep < 0) {
-          const octOut = octave.update(octRefY, timbre, span);
+          const octOut = octave.update(octRefY, timbresRef.current[0] || 'warmTheremin', span);
           octBand = octOut.noteName;
 
           // Scale pitch to selected octave
@@ -294,6 +313,33 @@ export const ThereminCore: React.FC<Props> = ({ onUpdate, timbre, settings, isRe
         }
         // Volume is handled by GestureController via direct gainNode access
         // No additional setVolume call here — the state machine controls it
+
+        // ── MIDI Recording: track note on/off from gesture state ──
+        const midi = midiRef.current;
+        const prevState = prevGestureStateRef.current;
+
+        if (gState === GestureState.ACTIVE && prevState !== GestureState.ACTIVE) {
+          // Pinch just closed → note ON
+          if (freq > 0) {
+            for (let ch = 0; ch < timbresRef.current.length; ch++) {
+              midi.noteOn(freq, vol, ch);
+            }
+          }
+        } else if (gState !== GestureState.ACTIVE && prevState === GestureState.ACTIVE) {
+          // Pinch just opened → note OFF
+          for (let ch = 0; ch < timbresRef.current.length; ch++) {
+            midi.noteOff(ch);
+          }
+        } else if (gState === GestureState.ACTIVE && freq > 0) {
+          // Continuous pitch update during active note
+          for (let ch = 0; ch < timbresRef.current.length; ch++) {
+            midi.updatePitch(freq, vol, ch);
+          }
+        }
+
+        prevGestureStateRef.current = gState;
+        lastFreqRef.current = freq;
+        lastVolRef.current = vol;
       }
 
       // ── Draw: pitch antenna proximity glow (gold) ──
