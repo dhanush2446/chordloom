@@ -281,7 +281,7 @@ export const ThereminCore: React.FC<Props> = ({ onUpdate, timbres, settings, isR
         const octRefY = (leftHandLm[5].y + leftHandLm[9].y + leftHandLm[13].y + leftHandLm[17].y) / 4;
 
         if (calibStep < 0) {
-          const octOut = octave.update(octRefY, timbresRef.current[0] || 'warmTheremin', span);
+          const octOut = octave.update(octRefY, timbresRef.current[0] || 'pureSine', span);
           octBand = octOut.noteName;
 
           // Scale pitch to selected octave

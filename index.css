@@ -2124,6 +2124,200 @@ ol {
   }
 }
 
+/* ── Recording Modal ──────────────────────────────────────── */
+.recording-modal-backdrop {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  background: rgba(30, 20, 10, 0.5);
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
+  z-index: 9999;
+  animation: fadeIn 200ms ease-out both;
+}
+
+.recording-modal {
+  position: fixed;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  z-index: 10000;
+  width: 420px;
+  max-width: 90vw;
+  background: linear-gradient(
+    145deg,
+    rgba(250, 247, 240, 0.97) 0%,
+    rgba(245, 240, 228, 0.98) 100%
+  );
+  backdrop-filter: blur(24px) saturate(1.4);
+  -webkit-backdrop-filter: blur(24px) saturate(1.4);
+  border: 1px solid rgba(201, 168, 76, 0.30);
+  border-radius: var(--radius-xl);
+  padding: 32px;
+  box-shadow:
+    0 20px 60px rgba(30, 20, 10, 0.25),
+    0 8px 20px rgba(30, 20, 10, 0.15),
+    inset 0 1px 0 rgba(255, 255, 255, 0.5);
+  animation: modalSlideIn 350ms cubic-bezier(0.2, 0.8, 0.2, 1) both;
+}
+
+@keyframes modalSlideIn {
+  from {
+    opacity: 0;
+    transform: translate(-50%, -45%) scale(0.95);
+  }
+  to {
+    opacity: 1;
+    transform: translate(-50%, -50%) scale(1);
+  }
+}
+
+.recording-modal-close {
+  position: absolute;
+  top: 16px;
+  right: 16px;
+  width: 32px;
+  height: 32px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(176, 125, 84, 0.08);
+  border: 1px solid rgba(176, 125, 84, 0.15);
+  border-radius: 50%;
+  color: var(--color-cedar);
+  cursor: pointer;
+  transition: all 0.2s ease;
+}
+
+.recording-modal-close:hover {
+  background: rgba(176, 125, 84, 0.15);
+  color: var(--color-mahogany);
+  transform: rotate(90deg);
+}
+
+.recording-modal-icon {
+  width: 56px;
+  height: 56px;
+  border-radius: 50%;
+  background: linear-gradient(135deg, rgba(201, 168, 76, 0.15), rgba(201, 168, 76, 0.08));
+  border: 1px solid rgba(201, 168, 76, 0.2);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--color-gold);
+  margin-bottom: 20px;
+}
+
+.recording-modal-title {
+  font-family: var(--font-display);
+  font-size: 1.5rem;
+  font-weight: 700;
+  color: var(--color-mahogany);
+  margin: 0 0 8px 0;
+  letter-spacing: -0.01em;
+}
+
+.recording-modal-desc {
+  font-family: var(--font-body);
+  font-size: 0.9rem;
+  color: var(--color-walnut);
+  margin: 0 0 24px 0;
+  line-height: 1.5;
+}
+
+.recording-modal-input-wrapper {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 14px 16px;
+  background: rgba(255, 255, 255, 0.6);
+  border: 1px solid rgba(176, 125, 84, 0.2);
+  border-radius: var(--radius-md);
+  margin-bottom: 24px;
+  transition: all 0.2s ease;
+}
+
+.recording-modal-input-wrapper:focus-within {
+  border-color: var(--color-gold);
+  box-shadow: 0 0 0 3px rgba(201, 168, 76, 0.12);
+  background: rgba(255, 255, 255, 0.8);
+}
+
+.recording-modal-input-wrapper svg {
+  flex-shrink: 0;
+  color: var(--color-cedar);
+}
+
+.recording-modal-input {
+  flex: 1;
+  border: none;
+  outline: none;
+  background: transparent;
+  font-family: var(--font-ui);
+  font-size: 1rem;
+  color: var(--color-mahogany);
+}
+
+.recording-modal-input::placeholder {
+  color: var(--color-oak);
+  opacity: 0.6;
+}
+
+.recording-modal-actions {
+  display: flex;
+  gap: 12px;
+}
+
+.recording-modal-btn {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  padding: 14px 0;
+  border-radius: var(--radius-md);
+  font-family: var(--font-ui);
+  font-weight: 600;
+  font-size: 0.95rem;
+  cursor: pointer;
+  transition: all 0.25s ease;
+  border: none;
+}
+
+.recording-modal-btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.recording-modal-btn-discard {
+  background: rgba(176, 125, 84, 0.06);
+  border: 1px solid rgba(176, 125, 84, 0.2);
+  color: var(--color-walnut);
+}
+
+.recording-modal-btn-discard:hover:not(:disabled) {
+  background: rgba(176, 125, 84, 0.12);
+  border-color: rgba(176, 125, 84, 0.3);
+}
+
+.recording-modal-btn-save {
+  background: linear-gradient(135deg, var(--color-gold) 0%, #b8942e 100%);
+  color: var(--color-linen);
+  box-shadow: 0 4px 14px rgba(201, 168, 76, 0.35);
+}
+
+.recording-modal-btn-save:hover:not(:disabled) {
+  box-shadow: 0 6px 20px rgba(201, 168, 76, 0.45);
+  transform: translateY(-1px);
+}
+
+.recording-modal-btn-save:active:not(:disabled) {
+  transform: translateY(0);
+  box-shadow: 0 2px 8px rgba(201, 168, 76, 0.3);
+}
+
 /* ── Selection ─────────────────────────────────────────────── */
 ::selection {
   background: rgba(201, 168, 76, 0.25);

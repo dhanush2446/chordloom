@@ -46,22 +46,21 @@ const BANDS_4_C3: OctaveBandDef[] = [
 
 // ── Timbre → band mapping ───────────────────────────────────────
 const TIMBRE_BANDS: Record<string, OctaveBandDef[]> = {
-  // Theremin timbres: 5 bands C2–C6
+  // Waveforms / Synth: 5 bands C2–C6
   pureSine:       BANDS_5_C2,
-  warmTheremin:   BANDS_5_C2,
+  sawtooth:       BANDS_5_C2,
+  square:         BANDS_5_C2,
+  triangle:       BANDS_5_C2,
+  
+  // Theremin timbres: 5 bands C2–C6
   brightTheremin: BANDS_5_C2,
 
   // Brass: 4 bands C2–C5
   brass:          BANDS_4_C2,
-  mellowBrass:    BANDS_4_C2,
-  brightBrass:    BANDS_4_C2,
+  acousticBrass:  BANDS_4_C2,
 
   // Strings: 5 bands C2–C6
   strings:        BANDS_5_C2,
-  cello:          BANDS_5_C2,
-
-  // Voice: 4 bands C3–C6
-  voice:          BANDS_4_C3,
 
   // Organ: 5 bands C2–C6
   organ:          BANDS_5_C2,
@@ -85,7 +84,7 @@ export class OctaveController {
   private currentBand = DEFAULT_BAND_INDEX;
   private candidateBand = DEFAULT_BAND_INDEX;
   private candidateFrames = 0;
-  private currentTimbre: TimbreKey = 'warmTheremin';
+  private currentTimbre: TimbreKey = 'pureSine';
   private bands: OctaveBandDef[] = BANDS_5_C2;
 
   /**

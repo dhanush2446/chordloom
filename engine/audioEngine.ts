@@ -31,7 +31,7 @@
  *                                                      [GestureGain] → [Destination]
  */
 
-import { TIMBRE_PROFILES, TimbreKey } from './timbres';
+import { TIMBRE_PROFILES, TimbreKey, TimbreAcoustics } from './timbres';
 
 // ── Sample playback types (preserved for acousticBrass) ──────────
 interface SampleBand { note: string; freq: number; }
@@ -51,7 +51,16 @@ interface InstrumentLayer {
   waveshaper: WaveShaperNode;
   lowpassFilter: BiquadFilterNode;
   highpassFilter: BiquadFilterNode;
-  layerGain: GainNode;          // per-layer volume control
+  layerGain: GainNode;
+  // ── Enhanced acoustic nodes ──
+  noiseSource: AudioBufferSourceNode | null;
+  noiseGain: GainNode | null;
+  noiseFilter: BiquadFilterNode | null;
+  tremoloLFO: OscillatorNode | null;
+  tremoloGain: GainNode | null;
+  formantFilters: BiquadFilterNode[];
+  formantGains: GainNode[];
+  formantMerge: GainNode | null;
 }
 
 export class AudioEngine {
@@ -68,6 +77,20 @@ export class AudioEngine {
   // ── Vibrato LFO ────────────────────────────────────────────────
   private vibratoLFO: OscillatorNode | null = null;
   private vibratoDepth: GainNode | null = null;
+
+  // ── Primary chain noise generator ──────────────────────────────
+  private noiseSource: AudioBufferSourceNode | null = null;
+  private noiseGain: GainNode | null = null;
+  private noiseFilter: BiquadFilterNode | null = null;
+
+  // ── Primary chain tremolo LFO ─────────────────────────────────
+  private tremoloLFO: OscillatorNode | null = null;
+  private tremoloGain: GainNode | null = null;
+
+  // ── Primary chain formant filters (voice timbre) ───────────────
+  private formantFilters: BiquadFilterNode[] = [];
+  private formantGains: GainNode[] = [];
+  private formantMerge: GainNode | null = null;
 
   // ── Tone shaping ───────────────────────────────────────────────
   private waveshaper: WaveShaperNode | null = null;
@@ -95,16 +118,17 @@ export class AudioEngine {
   // ── Timbre waves ───────────────────────────────────────────────
   private waves: Map<TimbreKey, PeriodicWave> = new Map();
 
-  private _currentTimbre: TimbreKey = 'warmTheremin';
-  private _activeTimbres: TimbreKey[] = ['warmTheremin'];
+  private _currentTimbre: TimbreKey = 'pureSine';
+  private _activeTimbres: TimbreKey[] = ['pureSine'];
   private _isRunning = false;
 
   // ── Orchestra layers ───────────────────────────────────────────
   private _layers: InstrumentLayer[] = [];
 
   // ── Detuning values in cents for each oscillator (analog drift) ─
-  private static readonly OSC_DETUNE = [0, +7, -7]; // centre, sharp, flat
-  private static readonly OSC_GAIN   = [0.55, 0.28, 0.28]; // centre dominates
+  // These are now PER-TIMBRE defaults, overridden by TimbreAcoustics
+  private static readonly DEFAULT_OSC_DETUNE = [0, +7, -7];
+  private static readonly DEFAULT_OSC_GAIN = [0.55, 0.28, 0.28];
 
   get isRunning() { return this._isRunning; }
   get currentTimbre() { return this._currentTimbre; }
@@ -135,7 +159,7 @@ export class AudioEngine {
     this._buildAllWaves();
 
     // 5. Set default wave on all oscillators
-    const defaultWave = this.waves.get('warmTheremin');
+    const defaultWave = this.waves.get('pureSine');
     if (defaultWave) {
       this.oscillators.forEach(osc => osc.setPeriodicWave(defaultWave));
     }
@@ -217,8 +241,8 @@ export class AudioEngine {
     for (let i = 0; i < 3; i++) {
       const osc = this.ctx.createOscillator();
       const gain = this.ctx.createGain();
-      gain.gain.value = AudioEngine.OSC_GAIN[i];
-      osc.detune.value = AudioEngine.OSC_DETUNE[i];
+      gain.gain.value = AudioEngine.DEFAULT_OSC_GAIN[i];
+      osc.detune.value = AudioEngine.DEFAULT_OSC_DETUNE[i];
       osc.connect(gain);
       gain.connect(this.oscMerge);
       this.oscillators.push(osc);
@@ -226,19 +250,99 @@ export class AudioEngine {
     }
 
     // ── Vibrato LFO ──────────────────────────────────────────────
-    // Real theremin players have natural hand tremor ~5-6 Hz
     this.vibratoLFO = this.ctx.createOscillator();
     this.vibratoLFO.type = 'sine';
-    this.vibratoLFO.frequency.value = 5.5; // Hz — natural tremor rate
+    this.vibratoLFO.frequency.value = 5.5;
 
     this.vibratoDepth = this.ctx.createGain();
-    this.vibratoDepth.gain.value = 2.5; // Cents of pitch wobble (very subtle)
+    this.vibratoDepth.gain.value = 2.5;
 
     this.vibratoLFO.connect(this.vibratoDepth);
-    // Connect vibrato to each oscillator's detune parameter
     this.oscillators.forEach(osc => {
       this.vibratoDepth!.connect(osc.detune);
     });
+
+    // ── Noise generator (bow rosin / breath / circuit hiss) ──────
+    this._buildNoiseChain();
+
+    // ── Tremolo LFO (amplitude modulation for strings/organ) ─────
+    this._buildTremoloChain();
+
+    // ── Formant filters (vocal resonance for voice timbre) ───────
+    this._buildFormantChain();
+  }
+
+  /** Create a white noise source + bandpass filter + gain node */
+  private _buildNoiseChain(): void {
+    if (!this.ctx || !this.synthMasterGain) return;
+
+    const bufferSize = this.ctx.sampleRate * 2;
+    const noiseBuffer = this.ctx.createBuffer(1, bufferSize, this.ctx.sampleRate);
+    const data = noiseBuffer.getChannelData(0);
+    for (let i = 0; i < bufferSize; i++) {
+      data[i] = (Math.random() * 2 - 1);
+    }
+
+    this.noiseSource = this.ctx.createBufferSource();
+    this.noiseSource.buffer = noiseBuffer;
+    this.noiseSource.loop = true;
+
+    this.noiseFilter = this.ctx.createBiquadFilter();
+    this.noiseFilter.type = 'bandpass';
+    this.noiseFilter.frequency.value = 3000;
+    this.noiseFilter.Q.value = 1.0;
+
+    this.noiseGain = this.ctx.createGain();
+    this.noiseGain.gain.value = 0;
+
+    this.noiseSource.connect(this.noiseFilter);
+    this.noiseFilter.connect(this.noiseGain);
+    this.noiseGain.connect(this.synthMasterGain);
+    this.noiseSource.start();
+  }
+
+  /** Create amplitude-modulation LFO for tremolo (strings, organ) */
+  private _buildTremoloChain(): void {
+    if (!this.ctx || !this.oscMerge) return;
+
+    this.tremoloLFO = this.ctx.createOscillator();
+    this.tremoloLFO.type = 'sine';
+    this.tremoloLFO.frequency.value = 0.001;
+
+    this.tremoloGain = this.ctx.createGain();
+    this.tremoloGain.gain.value = 0;
+
+    this.tremoloLFO.connect(this.tremoloGain);
+    this.tremoloGain.connect(this.oscMerge.gain);
+    this.tremoloLFO.start();
+  }
+
+  /** Create parallel bandpass formant filters for vocal resonance */
+  private _buildFormantChain(): void {
+    if (!this.ctx || !this.synthMasterGain || !this.oscMerge) return;
+
+    this.formantMerge = this.ctx.createGain();
+    this.formantMerge.gain.value = 0;
+    this.formantMerge.connect(this.synthMasterGain);
+
+    const defaultFreqs = [800, 1200, 2800];
+    const defaultBWs = [80, 90, 120];
+    for (let i = 0; i < 3; i++) {
+      const bp = this.ctx.createBiquadFilter();
+      bp.type = 'bandpass';
+      bp.frequency.value = defaultFreqs[i];
+      bp.Q.value = defaultFreqs[i] / defaultBWs[i];
+
+      const g = this.ctx.createGain();
+      g.gain.value = 0.3;
+
+      this.oscMerge.connect(bp);
+      bp.connect(g);
+      g.connect(this.formantMerge);
+
+      this.formantFilters.push(bp);
+      this.formantGains.push(g);
+    }
   }
 
   // ── Generate algorithmic reverb impulse response ───────────────
@@ -308,26 +412,26 @@ export class AudioEngine {
     try {
       // The user specified that instrument.wav is a C3 Brass note. C3 = 130.81 Hz.
       const response = await fetch('/audio/C3_Brass.wav');
-      if (!response.ok) throw new Error('User instrument.wav not found at /audio/C3_Brass.wav');
-      
+      if (!response.ok) throw new Error('User C3_Brass.wav not found at /audio/C3_Brass.wav');
+
       const arrayBuffer = await response.arrayBuffer();
       const audioBuffer = await this.ctx.decodeAudioData(arrayBuffer);
-      
+
       const source = this.ctx.createBufferSource();
       source.buffer = audioBuffer;
       source.loop = true; // Seamless loop!
-      
+
       const gainNode = this.ctx.createGain();
       gainNode.gain.value = 0; // Muted by default
-      
+
       source.connect(gainNode);
       gainNode.connect(this.sampleMasterGain);
       source.start();
-      
+
       // Store it using 'brass' as key to maintain previous lookup
       this.sampleInstances.set('brass_c3', { source, gain: gainNode, baseFreq: 130.81 });
       this.isSampleLoaded = true;
-      console.log('🎺 Custom C3 Brass Instrument (instrument.wav) loaded perfectly.');
+      console.log('🎺 Custom C3 Brass Instrument (C3_Brass.wav) loaded perfectly.');
     } catch (e) {
       console.warn('Real Brass Sample loading skipped or failed:', e);
     }
@@ -348,7 +452,7 @@ export class AudioEngine {
    */
   setMultiTimbre(keys: TimbreKey[]): void {
     if (!this.ctx || !this.synthMasterGain || !this.sampleMasterGain) return;
-    if (keys.length === 0) keys = ['warmTheremin'];
+    if (keys.length === 0) keys = ['pureSine'];
     const now = this.ctx.currentTime;
 
     const hasAcousticBrass = keys.includes('acousticBrass');
@@ -394,25 +498,31 @@ export class AudioEngine {
     this._activeTimbres = [...keys];
   }
 
+  /** Helper: get acoustics for a timbre key */
+  private _getAcoustics(key: TimbreKey): TimbreAcoustics {
+    return (TIMBRE_PROFILES[key] as any).acoustics;
+  }
+
   /** Build an independent instrument layer with its own signal chain */
   private _buildLayer(key: TimbreKey, gainValue: number): InstrumentLayer | null {
     if (!this.ctx || !this.synthMasterGain) return null;
+    const ac = this._getAcoustics(key);
 
     const oscMerge = this.ctx.createGain();
     oscMerge.gain.value = 0.7;
 
     const waveshaper = this.ctx.createWaveShaper();
-    waveshaper.curve = this._generateSaturationCurve(0.4);
+    waveshaper.curve = this._generateSaturationCurve(ac.saturation);
     waveshaper.oversample = '4x';
 
     const lowpass = this.ctx.createBiquadFilter();
     lowpass.type = 'lowpass';
-    lowpass.frequency.value = 3200;
-    lowpass.Q.value = 0.7;
+    lowpass.frequency.value = ac.lpFreq;
+    lowpass.Q.value = ac.lpQ;
 
     const highpass = this.ctx.createBiquadFilter();
     highpass.type = 'highpass';
-    highpass.frequency.value = 60;
+    highpass.frequency.value = ac.hpFreq;
     highpass.Q.value = 0.5;
 
     const layerGain = this.ctx.createGain();
@@ -425,19 +535,18 @@ export class AudioEngine {
     highpass.connect(layerGain);
     layerGain.connect(this.synthMasterGain);
 
-    // Create 3 detuned oscillators for this layer
+    // Create 3 detuned oscillators for this layer using per-timbre values
     const oscillators: OscillatorNode[] = [];
     const oscGains: GainNode[] = [];
 
     for (let i = 0; i < 3; i++) {
       const osc = this.ctx.createOscillator();
       const gain = this.ctx.createGain();
-      gain.gain.value = AudioEngine.OSC_GAIN[i];
-      osc.detune.value = AudioEngine.OSC_DETUNE[i];
+      gain.gain.value = ac.oscLevels[i];
+      osc.detune.value = ac.detuneCents[i];
       osc.connect(gain);
       gain.connect(oscMerge);
 
-      // Connect vibrato LFO to each oscillator's detune
       if (this.vibratoDepth) {
         this.vibratoDepth.connect(osc.detune);
       }
@@ -458,8 +567,82 @@ export class AudioEngine {
       oscillators.forEach(osc => { osc.frequency.value = currentFreq; });
     }
 
-    // Start the oscillators
     oscillators.forEach(osc => osc.start());
+
+    // ── Per-layer noise generator ──
+    let noiseSource: AudioBufferSourceNode | null = null;
+    let noiseGainNode: GainNode | null = null;
+    let noiseFilterNode: BiquadFilterNode | null = null;
+
+    if (ac.noiseLevel > 0) {
+      const bufferSize = this.ctx.sampleRate * 2;
+      const noiseBuffer = this.ctx.createBuffer(1, bufferSize, this.ctx.sampleRate);
+      const data = noiseBuffer.getChannelData(0);
+      for (let i = 0; i < bufferSize; i++) {
+        data[i] = Math.random() * 2 - 1;
+      }
+      noiseSource = this.ctx.createBufferSource();
+      noiseSource.buffer = noiseBuffer;
+      noiseSource.loop = true;
+
+      noiseFilterNode = this.ctx.createBiquadFilter();
+      noiseFilterNode.type = 'bandpass';
+      noiseFilterNode.frequency.value = ac.noiseFilterFreq;
+      noiseFilterNode.Q.value = ac.noiseFilterQ;
+
+      noiseGainNode = this.ctx.createGain();
+      noiseGainNode.gain.value = ac.noiseLevel;
+
+      noiseSource.connect(noiseFilterNode);
+      noiseFilterNode.connect(noiseGainNode);
+      noiseGainNode.connect(layerGain);
+      noiseSource.start();
+    }
+
+    // ── Per-layer tremolo LFO ──
+    let tremoloLFO: OscillatorNode | null = null;
+    let tremoloGainNode: GainNode | null = null;
+
+    if (ac.tremoloRate > 0 && ac.tremoloDepth > 0) {
+      tremoloLFO = this.ctx.createOscillator();
+      tremoloLFO.type = 'sine';
+      tremoloLFO.frequency.value = ac.tremoloRate;
+
+      tremoloGainNode = this.ctx.createGain();
+      tremoloGainNode.gain.value = ac.tremoloDepth;
+
+      tremoloLFO.connect(tremoloGainNode);
+      tremoloGainNode.connect(oscMerge.gain);
+      tremoloLFO.start();
+    }
+
+    // ── Per-layer formant filters (for voice-like instruments) ──
+    const formantFilters: BiquadFilterNode[] = [];
+    const formantGainsArr: GainNode[] = [];
+    let formantMergeNode: GainNode | null = null;
+
+    if (ac.formants && ac.formantBandwidths && ac.formantGains) {
+      formantMergeNode = this.ctx.createGain();
+      formantMergeNode.gain.value = 0.5; // Blend formant resonances
+      formantMergeNode.connect(layerGain);
+
+      for (let i = 0; i < 3; i++) {
+        const bp = this.ctx.createBiquadFilter();
+        bp.type = 'bandpass';
+        bp.frequency.value = ac.formants[i];
+        bp.Q.value = ac.formants[i] / ac.formantBandwidths[i];
+
+        const g = this.ctx.createGain();
+        g.gain.value = ac.formantGains[i] * 0.4;
+
+        oscMerge.connect(bp);
+        bp.connect(g);
+        g.connect(formantMergeNode);
+
+        formantFilters.push(bp);
+        formantGainsArr.push(g);
+      }
+    }
 
     return {
       timbreKey: key,
@@ -470,55 +653,114 @@ export class AudioEngine {
       lowpassFilter: lowpass,
       highpassFilter: highpass,
       layerGain,
+      noiseSource,
+      noiseGain: noiseGainNode,
+      noiseFilter: noiseFilterNode,
+      tremoloLFO,
+      tremoloGain: tremoloGainNode,
+      formantFilters,
+      formantGains: formantGainsArr,
+      formantMerge: formantMergeNode,
     };
   }
 
   /** Dispose all orchestra layers */
   private _disposeLayers(): void {
     for (const layer of this._layers) {
-      layer.oscillators.forEach(osc => { try { osc.stop(); } catch {} });
+      layer.oscillators.forEach(osc => { try { osc.stop(); } catch { } });
+      if (layer.noiseSource) { try { layer.noiseSource.stop(); } catch { } }
+      if (layer.tremoloLFO) { try { layer.tremoloLFO.stop(); } catch { } }
       layer.oscMerge.disconnect();
       layer.waveshaper.disconnect();
       layer.lowpassFilter.disconnect();
       layer.highpassFilter.disconnect();
       layer.layerGain.disconnect();
+      layer.noiseGain?.disconnect();
+      layer.noiseFilter?.disconnect();
+      layer.tremoloGain?.disconnect();
+      layer.formantMerge?.disconnect();
+      layer.formantFilters.forEach(f => f.disconnect());
+      layer.formantGains.forEach(g => g.disconnect());
     }
     this._layers = [];
   }
 
-  /** Adapt a layer's filter+saturation to match the timbre character */
+  /** Adapt a layer's filter+saturation+noise+tremolo to match the timbre character */
   private _adaptLayerToTimbre(layer: InstrumentLayer, key: TimbreKey, now: number): void {
-    const params = this._getTimbreParams(key);
-    layer.lowpassFilter.frequency.setTargetAtTime(params.lpFreq, now, 0.1);
-    layer.waveshaper.curve = this._generateSaturationCurve(params.saturation);
-  }
-
-  /** Get timbre-specific filter and saturation params */
-  private _getTimbreParams(key: TimbreKey): { lpFreq: number; vibDepth: number; vibRate: number; saturation: number } {
-    switch (key) {
-      case 'pureSine':       return { lpFreq: 2000, vibDepth: 1.5, vibRate: 5.5, saturation: 0.15 };
-      case 'warmTheremin':   return { lpFreq: 3200, vibDepth: 2.5, vibRate: 5.5, saturation: 0.40 };
-      case 'brightTheremin': return { lpFreq: 5000, vibDepth: 3.0, vibRate: 5.5, saturation: 0.50 };
-      case 'brass':
-      case 'brightBrass':    return { lpFreq: 6000, vibDepth: 4.0, vibRate: 5.5, saturation: 0.60 };
-      case 'mellowBrass':    return { lpFreq: 2800, vibDepth: 2.0, vibRate: 5.5, saturation: 0.35 };
-      case 'strings':
-      case 'cello':          return { lpFreq: 4500, vibDepth: 5.0, vibRate: 6.2, saturation: 0.30 };
-      case 'voice':          return { lpFreq: 3800, vibDepth: 6.0, vibRate: 5.8, saturation: 0.45 };
-      case 'hollow':         return { lpFreq: 2500, vibDepth: 1.8, vibRate: 5.5, saturation: 0.20 };
-      case 'organ':          return { lpFreq: 5500, vibDepth: 3.5, vibRate: 6.8, saturation: 0.55 };
-      default:               return { lpFreq: 3200, vibDepth: 2.5, vibRate: 5.5, saturation: 0.40 };
-    }
+    const ac = this._getAcoustics(key);
+    layer.lowpassFilter.frequency.setTargetAtTime(ac.lpFreq, now, 0.1);
+    layer.lowpassFilter.Q.setTargetAtTime(ac.lpQ, now, 0.1);
+    layer.highpassFilter.frequency.setTargetAtTime(ac.hpFreq, now, 0.1);
+    layer.waveshaper.curve = this._generateSaturationCurve(ac.saturation);
   }
 
   /** Fine-tune the analog modelling per timbre (for primary oscillators) */
   private _adaptToTimbre(key: TimbreKey, now: number): void {
     if (!this.lowpassFilter || !this.vibratoDepth || !this.vibratoLFO || !this.waveshaper) return;
-    const p = this._getTimbreParams(key);
-    this.lowpassFilter.frequency.setTargetAtTime(p.lpFreq, now, 0.1);
-    this.vibratoDepth.gain.setTargetAtTime(p.vibDepth, now, 0.1);
-    this.vibratoLFO.frequency.setTargetAtTime(p.vibRate, now, 0.1);
-    this.waveshaper.curve = this._generateSaturationCurve(p.saturation);
+    const ac = this._getAcoustics(key);
+
+    // Filter
+    this.lowpassFilter.frequency.setTargetAtTime(ac.lpFreq, now, 0.1);
+    this.lowpassFilter.Q.setTargetAtTime(ac.lpQ, now, 0.1);
+    if (this.highpassFilter) {
+      this.highpassFilter.frequency.setTargetAtTime(ac.hpFreq, now, 0.1);
+    }
+
+    // Vibrato
+    this.vibratoDepth.gain.setTargetAtTime(ac.vibDepth, now, 0.1);
+    this.vibratoLFO.frequency.setTargetAtTime(ac.vibRate, now, 0.1);
+
+    // Saturation
+    this.waveshaper.curve = this._generateSaturationCurve(ac.saturation);
+
+    // Per-timbre detuning on primary oscillators
+    for (let i = 0; i < this.oscillators.length && i < 3; i++) {
+      this.oscillators[i].detune.setTargetAtTime(ac.detuneCents[i], now, 0.05);
+    }
+    for (let i = 0; i < this.oscGains.length && i < 3; i++) {
+      this.oscGains[i].gain.setTargetAtTime(ac.oscLevels[i], now, 0.05);
+    }
+
+    // Noise generator
+    if (this.noiseGain && this.noiseFilter) {
+      this.noiseGain.gain.setTargetAtTime(ac.noiseLevel, now, 0.1);
+      this.noiseFilter.frequency.setTargetAtTime(ac.noiseFilterFreq, now, 0.1);
+      this.noiseFilter.Q.setTargetAtTime(ac.noiseFilterQ, now, 0.1);
+    }
+
+    // Tremolo
+    if (this.tremoloLFO && this.tremoloGain) {
+      if (ac.tremoloRate > 0 && ac.tremoloDepth > 0) {
+        this.tremoloLFO.frequency.setTargetAtTime(ac.tremoloRate, now, 0.1);
+        this.tremoloGain.gain.setTargetAtTime(ac.tremoloDepth, now, 0.1);
+      } else {
+        this.tremoloGain.gain.setTargetAtTime(0, now, 0.05);
+        this.tremoloLFO.frequency.setTargetAtTime(0.001, now, 0.05);
+      }
+    }
+
+    // Formant filters
+    if (ac.formants && ac.formantBandwidths && ac.formantGains && this.formantMerge) {
+      this.formantMerge.gain.setTargetAtTime(0.5, now, 0.1); // Enable formants
+      for (let i = 0; i < this.formantFilters.length && i < 3; i++) {
+        this.formantFilters[i].frequency.setTargetAtTime(ac.formants[i], now, 0.1);
+        this.formantFilters[i].Q.setTargetAtTime(ac.formants[i] / ac.formantBandwidths[i], now, 0.1);
+        this.formantGains[i].gain.setTargetAtTime(ac.formantGains[i] * 0.4, now, 0.1);
+      }
+    } else if (this.formantMerge) {
+      // Disable formants for non-voice timbres
+      this.formantMerge.gain.setTargetAtTime(0, now, 0.1);
+    }
+
+    // Reverb mix override
+    if (ac.reverbMix !== null && this.wetGain && this.dryGain) {
+      this.wetGain.gain.setTargetAtTime(ac.reverbMix, now, 0.15);
+      this.dryGain.gain.setTargetAtTime(1.0 - ac.reverbMix, now, 0.15);
+    } else if (this.wetGain && this.dryGain) {
+      // Default rev mix
+      this.wetGain.gain.setTargetAtTime(0.35, now, 0.15);
+      this.dryGain.gain.setTargetAtTime(0.65, now, 0.15);
+    }
   }
 
   setFrequency(hz: number): void {
@@ -627,18 +869,28 @@ export class AudioEngine {
     // Dispose orchestra layers first
     this._disposeLayers();
 
-    this.oscillators.forEach(osc => { try { osc.stop(); } catch {} });
-    try { this.vibratoLFO?.stop(); } catch {}
+    this.oscillators.forEach(osc => { try { osc.stop(); } catch { } });
+    try { this.vibratoLFO?.stop(); } catch { }
+    try { this.noiseSource?.stop(); } catch { }
+    try { this.tremoloLFO?.stop(); } catch { }
     for (const inst of this.sampleInstances.values()) {
-      try { inst.source.stop(); } catch {}
+      try { inst.source.stop(); } catch { }
     }
-    try { this.ctx?.close(); } catch {}
+    try { this.ctx?.close(); } catch { }
 
     this.oscillators = [];
     this.oscGains = [];
     this.oscMerge = null;
     this.vibratoLFO = null;
     this.vibratoDepth = null;
+    this.noiseSource = null;
+    this.noiseGain = null;
+    this.noiseFilter = null;
+    this.tremoloLFO = null;
+    this.tremoloGain = null;
+    this.formantFilters = [];
+    this.formantGains = [];
+    this.formantMerge = null;
     this.waveshaper = null;
     this.lowpassFilter = null;
     this.highpassFilter = null;

@@ -2,7 +2,7 @@ import React, { useState, useRef, useEffect, useCallback } from 'react';
 import { TIMBRE_PROFILES, TIMBRE_KEYS, TimbreKey } from '../../engine/timbres';
 
 export const TimbreShowcase: React.FC = () => {
-  const [active, setActive] = useState<TimbreKey>('warmTheremin');
+  const [active, setActive] = useState<TimbreKey>('pureSine');
   const [isPlaying, setIsPlaying] = useState(false);
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const animRef = useRef(0);

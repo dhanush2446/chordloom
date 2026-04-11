@@ -28,14 +28,12 @@ import type { TimbreKey } from './timbres';
 // ── General MIDI Program Numbers (1-indexed per spec, we store 0-indexed) ──
 const GM_PROGRAM_MAP: Record<string, number> = {
   pureSine:       80,  // Lead 2 (sawtooth) — 0-indexed
-  warmTheremin:   81,  // Lead 3 (calliope)
+  sawtooth:       81,  // Lead 3 (calliope)
+  square:         80,  // Lead 2 (sawtooth)
+  triangle:       80,  // Lead 2 (sawtooth)
   brightTheremin: 81,  // Lead 3 (calliope)
   brass:          61,  // Brass Section
-  mellowBrass:    60,  // French Horn
-  brightBrass:    56,  // Trumpet
   strings:        48,  // String Ensemble 1
-  cello:          42,  // Cello
-  voice:          54,  // Voice Oohs
   hollow:         71,  // Clarinet
   organ:          19,  // Church Organ
   acousticBrass:  61,  // Brass Section
@@ -387,14 +385,12 @@ function stringToBytes(s: string): number[] {
 function getTimbreLabel(key: TimbreKey): string {
   const labels: Record<string, string> = {
     pureSine: 'Pure Sine',
-    warmTheremin: 'Warm Theremin',
+    sawtooth: 'Sawtooth',
+    square: 'Square',
+    triangle: 'Triangle',
     brightTheremin: 'Bright Theremin',
     brass: 'Brass',
-    mellowBrass: 'French Horn',
-    brightBrass: 'Trumpet',
     strings: 'Strings',
-    cello: 'Cello',
-    voice: 'Voice',
     hollow: 'Hollow',
     organ: 'Organ',
     acousticBrass: 'Acoustic Brass',

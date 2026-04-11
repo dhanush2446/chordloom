@@ -18,7 +18,7 @@ export const InstrumentPage: React.FC<Props> = ({ onExit, user, onLogout }) => {
     gestureState: GestureState.INACTIVE as GestureState,
     octaveBand: '', pinchDist: 0,
   });
-  const [selectedTimbres, setSelectedTimbres] = useState<Set<TimbreKey>>(new Set(['warmTheremin']));
+  const [selectedTimbres, setSelectedTimbres] = useState<Set<TimbreKey>>(new Set(['pureSine']));
   const [showHelp, setShowHelp] = useState(false);
   const [showSettings, setShowSettings] = useState(false);
   const [settings, setSettings] = useState({
@@ -70,7 +70,7 @@ export const InstrumentPage: React.FC<Props> = ({ onExit, user, onLogout }) => {
 
   const clearToSingle = useCallback(() => {
     setSelectedTimbres(prev => {
-      const first = prev.values().next().value || 'warmTheremin';
+      const first = prev.values().next().value || 'pureSine';
       return new Set([first] as TimbreKey[]);
     });
   }, []);
@@ -468,51 +468,62 @@ export const InstrumentPage: React.FC<Props> = ({ onExit, user, onLogout }) => {
       {recordingBlob && (
         <>
           {/* Modal Backdrop */}
-          <div style={{
-            position: 'fixed', top: 0, left: 0, right: 0, bottom: 0,
-            background: 'rgba(0,0,0,0.4)', backdropFilter: 'blur(4px)',
-            zIndex: 999
-          }} />
-          <div style={{
-            position: 'fixed', top: '50%', left: '50%', transform: 'translate(-50%, -50%)',
-            background: 'rgba(250,247,240,0.98)', backdropFilter: 'blur(24px)', zIndex: 1000,
-            padding: 'var(--space-4)', borderRadius: 'var(--radius-xl)',
-            border: '1px solid rgba(201,168,76,0.3)', boxShadow: 'var(--shadow-2xl)',
-            width: 400, maxWidth: '90vw',
-            animation: 'fadeIn 300ms cubic-bezier(0.2,0.8,0.2,1)'
-          }}>
-            <h2 style={{ fontFamily: 'var(--font-display)', fontSize: '1.5rem', color: 'var(--color-mahogany)', marginBottom: 8 }}>Save Recording</h2>
-            <p style={{ fontFamily: 'var(--font-body)', fontSize: '0.9rem', color: 'var(--color-walnut)', marginBottom: 24 }}>
+          <div 
+            className="recording-modal-backdrop"
+            onClick={() => { setRecordingBlob(null); setRecordingTitle(''); }}
+          />
+          <div className="recording-modal">
+            {/* Close button */}
+            <button
+              className="recording-modal-close"
+              onClick={() => { setRecordingBlob(null); setRecordingTitle(''); }}
+              aria-label="Close"
+            >
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"><path d="M18 6L6 18M6 6l12 12" /></svg>
+            </button>
+
+            {/* Icon */}
+            <div className="recording-modal-icon">
+              <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round">
+                <path d="M12 2a3 3 0 0 0-3 3v7a3 3 0 0 0 6 0V5a3 3 0 0 0-3-3z" />
+                <path d="M19 10v2a7 7 0 0 1-14 0v-2" />
+                <line x1="12" y1="19" x2="12" y2="22" />
+                <line x1="8" y1="22" x2="16" y2="22" />
+              </svg>
+            </div>
+
+            <h2 className="recording-modal-title">Save Recording</h2>
+            <p className="recording-modal-desc">
               Give your session a name to save it to your profile.
             </p>
             
-            <div style={{ position: 'relative', marginBottom: 24, borderBottom: '1px solid var(--color-oak)' }}>
-              <svg style={{ position: 'absolute', left: 12, top: 12, color: 'var(--color-cedar)' }} width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M12 2v20M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6"/></svg>
+            <div className="recording-modal-input-wrapper">
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7" /><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z" /></svg>
               <input 
                 autoFocus
                 type="text" 
                 value={recordingTitle} 
                 onChange={e => setRecordingTitle(e.target.value)} 
                 placeholder="Recording Title"
-                style={{ width: '100%', outline: 'none', background: 'transparent', border: 'none', padding: '12px 12px 12px 40px', fontFamily: 'var(--font-ui)', fontSize: '1rem', color: 'var(--color-mahogany)' }}
+                className="recording-modal-input"
               />
             </div>
 
-            <div style={{ display: 'flex', gap: 12 }}>
+            <div className="recording-modal-actions">
               <button 
-                className="btn-outline" 
-                style={{ flex: 1, padding: '12px 0', fontSize: '0.95rem' }}
+                className="recording-modal-btn recording-modal-btn-discard" 
                 onClick={() => { setRecordingBlob(null); setRecordingTitle(''); }}
                 disabled={isSavingRecord}
               >
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"><path d="M3 6h18M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2" /></svg>
                 Discard
               </button>
               <button 
-                className="btn-gold" 
-                style={{ flex: 1, padding: '12px 0', fontSize: '0.95rem', justifyContent: 'center' }}
+                className="recording-modal-btn recording-modal-btn-save" 
                 onClick={handleSaveRecording}
                 disabled={isSavingRecord}
               >
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"><path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z" /><polyline points="17 21 17 13 7 13 7 21" /><polyline points="7 3 7 8 15 8" /></svg>
                 {isSavingRecord ? 'Saving...' : 'Save Audio'}
               </button>
             </div>
