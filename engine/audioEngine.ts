@@ -125,6 +125,9 @@ export class AudioEngine {
   // ── Orchestra layers ───────────────────────────────────────────
   private _layers: InstrumentLayer[] = [];
 
+  // ── Hybrid crossfade: synth brass backing layer for acousticBrass ──
+  private _hybridSynthLayer: InstrumentLayer | null = null;
+
   // ── Detuning values in cents for each oscillator (analog drift) ─
   // These are now PER-TIMBRE defaults, overridden by TimbreAcoustics
   private static readonly DEFAULT_OSC_DETUNE = [0, +7, -7];
@@ -404,36 +407,122 @@ export class AudioEngine {
   }
 
   // ═══════════════════════════════════════════════════════════════
-  //  SAMPLER (User's Custom Brass C3)
   // ═══════════════════════════════════════════════════════════════
+  //  MULTISAMPLE SAMPLER — 3 brass samples with crossfading
+  //
+  //  Samples: C3 (130.81Hz), C4 (261.63Hz), C5 (523.25Hz)
+  //  Each sample gets a 3-voice detuned ensemble (0, +6, -6 cents).
+  //  Total: 9 AudioBufferSourceNodes running simultaneously.
+  //
+  //  At any given pitch, we find the two bracketing samples and
+  //  smoothly cosine-crossfade between them. Each sample only ever
+  //  stretches ~6 semitones, staying well within natural-sounding range.
+  //
+  //  Signal chain per sample zone:
+  //  [3 voices] → [zone gain] → [shared waveshaper] → [LP@4500] → [HP@80] → sampleMasterGain
+  // ═══════════════════════════════════════════════════════════════
+
+  private sampleBuffer: AudioBuffer | null = null;
+  private sampleSources: AudioBufferSourceNode[] = [];
+  private sampleGains: GainNode[] = [];
+
+  // Each sample zone: { sources[3], gains[3], zoneGain, baseFreq }
+  private _sampleZones: {
+    baseFreq: number;
+    sources: AudioBufferSourceNode[];
+    gains: GainNode[];
+    zoneGain: GainNode;
+  }[] = [];
 
   private async _loadSamples(): Promise<void> {
     if (!this.ctx || !this.sampleMasterGain) return;
     try {
-      // The user specified that instrument.wav is a C3 Brass note. C3 = 130.81 Hz.
-      const response = await fetch('/audio/C3_Brass.wav');
-      if (!response.ok) throw new Error('User C3_Brass.wav not found at /audio/C3_Brass.wav');
+      // ── Load all 3 sample files ───────────────────────────────
+      const sampleDefs = [
+        { file: '/audio/C3_Brass.wav', freq: 130.81 },
+        { file: '/audio/C4_Brass.wav', freq: 261.63 },
+        { file: '/audio/C5_Brass.wav', freq: 523.25 },
+      ];
 
-      const arrayBuffer = await response.arrayBuffer();
-      const audioBuffer = await this.ctx.decodeAudioData(arrayBuffer);
+      const buffers: AudioBuffer[] = [];
+      for (const def of sampleDefs) {
+        const response = await fetch(def.file);
+        if (!response.ok) throw new Error(`Sample not found: ${def.file}`);
+        const ab = await response.arrayBuffer();
+        buffers.push(await this.ctx.decodeAudioData(ab));
+      }
 
-      const source = this.ctx.createBufferSource();
-      source.buffer = audioBuffer;
-      source.loop = true; // Seamless loop!
+      // ── Shared signal chain: waveshaper → LP → HP → master ────
+      const sampleWaveshaper = this.ctx.createWaveShaper();
+      const drive = 1.65;
+      const curveLen = 8192;
+      const curve = new Float32Array(curveLen);
+      for (let i = 0; i < curveLen; i++) {
+        const x = (i * 2) / curveLen - 1;
+        curve[i] = Math.tanh(drive * x);
+      }
+      sampleWaveshaper.curve = curve;
+      sampleWaveshaper.oversample = '4x';
 
-      const gainNode = this.ctx.createGain();
-      gainNode.gain.value = 0; // Muted by default
+      const sampleLP = this.ctx.createBiquadFilter();
+      sampleLP.type = 'lowpass';
+      sampleLP.frequency.value = 4500;
+      sampleLP.Q.value = 1.0;
 
-      source.connect(gainNode);
-      gainNode.connect(this.sampleMasterGain);
-      source.start();
+      const sampleHP = this.ctx.createBiquadFilter();
+      sampleHP.type = 'highpass';
+      sampleHP.frequency.value = 80;
+      sampleHP.Q.value = 0.5;
 
-      // Store it using 'brass' as key to maintain previous lookup
-      this.sampleInstances.set('brass_c3', { source, gain: gainNode, baseFreq: 130.81 });
+      const sampleMerge = this.ctx.createGain();
+      sampleMerge.gain.value = 0.55;
+      sampleMerge.connect(sampleWaveshaper);
+      sampleWaveshaper.connect(sampleLP);
+      sampleLP.connect(sampleHP);
+      sampleHP.connect(this.sampleMasterGain);
+
+      // ── Build 3 sample zones (each with 3 detuned voices) ─────
+      const detuneCents = [0, +6, -6];
+
+      for (let z = 0; z < sampleDefs.length; z++) {
+        const zoneGain = this.ctx.createGain();
+        zoneGain.gain.value = 0;
+        zoneGain.connect(sampleMerge);
+
+        const sources: AudioBufferSourceNode[] = [];
+        const gains: GainNode[] = [];
+
+        for (let v = 0; v < 3; v++) {
+          const src = this.ctx.createBufferSource();
+          src.buffer = buffers[z];
+          src.loop = true;
+          src.detune.value = detuneCents[v];
+
+          const g = this.ctx.createGain();
+          g.gain.value = [0.45, 0.35, 0.35][v]; // Initial detune spread volumes
+
+          src.connect(g);
+          g.connect(zoneGain);
+          src.start();
+
+          sources.push(src);
+          gains.push(g);
+          this.sampleSources.push(src);
+          this.sampleGains.push(g);
+        }
+
+        this._sampleZones.push({
+          baseFreq: sampleDefs[z].freq,
+          sources,
+          gains,
+          zoneGain,
+        });
+      }
+
       this.isSampleLoaded = true;
-      console.log('🎺 Custom C3 Brass Instrument (C3_Brass.wav) loaded perfectly.');
+      console.log('🎺 Multisample Brass: C3+C4+C5 (3 voices each, 9 total) + tanh(1.65x) + LP@4500/HP@80');
     } catch (e) {
-      console.warn('Real Brass Sample loading skipped or failed:', e);
+      console.warn('Multisample Brass loading failed:', e);
     }
   }
 
@@ -460,13 +549,35 @@ export class AudioEngine {
 
     // Handle acousticBrass sample layer
     if (hasAcousticBrass && this.isSampleLoaded) {
-      this.sampleMasterGain.gain.setTargetAtTime(1 / keys.length, now, 0.05);
+      this.sampleMasterGain.gain.setTargetAtTime(1.0, now, 0.05);
+      // Sample voices start at full (crossfade will adjust in setFrequency)
+      const voiceLevels = [0.45, 0.35, 0.35];
+      for (let i = 0; i < this.sampleGains.length; i++) {
+        this.sampleGains[i].gain.setTargetAtTime(voiceLevels[i % 3], now, 0.05);
+      }
     } else {
       this.sampleMasterGain.gain.setTargetAtTime(0, now, 0.05);
+      // Mute all sample voices
+      for (const g of this.sampleGains) {
+        g.gain.setTargetAtTime(0, now, 0.03);
+      }
     }
 
     // Tear down old layers
     this._disposeLayers();
+    this._hybridSynthLayer = null;
+
+    // ── HYBRID CROSSFADE: build a synth 'brass' backing layer ──
+    if (hasAcousticBrass && this.isSampleLoaded) {
+      this.synthMasterGain.gain.setTargetAtTime(1, now, 0.05);
+      const hybridLayer = this._buildLayer('brass', 0.7);
+      if (hybridLayer) {
+        hybridLayer.layerGain.gain.setValueAtTime(0, now);
+        this._layers.push(hybridLayer);
+        this._adaptLayerToTimbre(hybridLayer, 'brass', now);
+        this._hybridSynthLayer = hybridLayer;
+      }
+    }
 
     if (synthKeys.length > 0) {
       this.synthMasterGain.gain.setTargetAtTime(1, now, 0.05);
@@ -797,13 +908,53 @@ export class AudioEngine {
       );
     }
 
-    // Update sampler portamento
-    if (this.sampleInstances.size > 0 && this._activeTimbres.includes('acousticBrass')) {
-      const instance = this.sampleInstances.get('brass_c3');
-      if (instance) {
-        const rate = hz / instance.baseFreq;
-        instance.source.playbackRate.setTargetAtTime(rate, now, glideTime);
-        instance.gain.gain.setTargetAtTime(1.0, now, 0.05);
+    // ── MULTISAMPLE ZONE CROSSFADE ────────────────────────────────
+    // 3 sample zones: C3(130.81), C4(261.63), C5(523.25)
+    // For any pitch, find the two nearest zones and crossfade between
+    // them via cosine interpolation.
+    if (this.isSampleLoaded && this._activeTimbres.includes('acousticBrass') && this._sampleZones.length === 3) {
+      const zones = this._sampleZones;
+      const crossfadeTC = 0.025; // 25ms
+
+      for (const zone of zones) {
+        const rate = hz / zone.baseFreq;
+        for (const src of zone.sources) {
+          src.playbackRate.setTargetAtTime(rate, now, glideTime);
+        }
+      }
+
+      const zoneVolumes = [0, 0, 0];
+      if (hz <= zones[0].baseFreq) {
+        zoneVolumes[0] = 1.0;
+      } else if (hz >= zones[2].baseFreq) {
+        zoneVolumes[2] = 1.0;
+      } else if (hz < zones[1].baseFreq) {
+        const semis = 12 * Math.log2(hz / zones[0].baseFreq);
+        const t = semis / 12;
+        zoneVolumes[0] = 0.5 * (1 + Math.cos(Math.PI * t));
+        zoneVolumes[1] = 0.5 * (1 - Math.cos(Math.PI * t));
+      } else {
+        const semis = 12 * Math.log2(hz / zones[1].baseFreq);
+        const t = semis / 12;
+        zoneVolumes[1] = 0.5 * (1 + Math.cos(Math.PI * t));
+        zoneVolumes[2] = 0.5 * (1 - Math.cos(Math.PI * t));
+      }
+
+      for (let z = 0; z < zones.length; z++) {
+        zones[z].zoneGain.gain.setTargetAtTime(zoneVolumes[z], now, crossfadeTC);
+      }
+
+      const semiAboveC5 = hz > zones[2].baseFreq ? 12 * Math.log2(hz / zones[2].baseFreq) : 0;
+      if (this._hybridSynthLayer && semiAboveC5 > 6) {
+        const synthBlend = Math.min(1, (semiAboveC5 - 6) / 6);
+        const sampleFade = 1 - synthBlend;
+        this.sampleMasterGain?.gain.setTargetAtTime(sampleFade, now, crossfadeTC);
+        this._hybridSynthLayer.layerGain.gain.setTargetAtTime(0.7 * synthBlend, now, crossfadeTC);
+      } else {
+        this.sampleMasterGain?.gain.setTargetAtTime(1.0, now, crossfadeTC);
+        if (this._hybridSynthLayer) {
+          this._hybridSynthLayer.layerGain.gain.setTargetAtTime(0, now, crossfadeTC);
+        }
       }
     }
   }
@@ -903,6 +1054,10 @@ export class AudioEngine {
     this.ctx = null;
     this.waves.clear();
     this.sampleInstances.clear();
+    this.sampleSources = [];
+    this.sampleGains = [];
+    this._sampleZones = [];
+    this._hybridSynthLayer = null;
     this._isRunning = false;
   }
 }

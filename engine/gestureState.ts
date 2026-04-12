@@ -29,19 +29,25 @@ const DEFAULT_FLICK_VEL_THRESHOLD = 1.5; // normalized units/second
 // ── Pinch detection via normalized ratio ────────────────────────
 // ratio = (thumb tip ↔ index tip distance) / (wrist ↔ middle MCP distance)
 // This is SCALE-INVARIANT — works at any hand distance from camera.
-// Typical values: pinched ≈ 0.15–0.35, open ≈ 0.6–1.0
-const PINCH_CLOSE_RATIO = 0.50;  // ratio below this → pinched
-const PINCH_OPEN_RATIO  = 0.70;  // ratio above this → released (hysteresis gap)
+//
+// REAL-WORLD CALIBRATION (from user testing):
+//   Fingers touching:  ratio ≈ 0.10–0.20
+//   Fingers 2cm apart: ratio ≈ 0.25–0.35
+//   Fingers wide open:  ratio ≈ 0.60–1.00
+//
+// The user wants release to trigger at just ~2cm separation.
+const PINCH_CLOSE_RATIO = 0.22;  // ratio below this → pinched (fingers nearly touching)
+const PINCH_OPEN_RATIO  = 0.32;  // ratio above this → released (~2cm separation)
 
 // ── Pinch debounce ──────────────────────────────────────────────
-// Require N consecutive frames of agreement before accepting state change
-const PINCH_DEBOUNCE_FRAMES = 2;
+// ZERO debounce — instant response, no frame delay
+const PINCH_DEBOUNCE_FRAMES = 0;
 
 // ── Timing constants ────────────────────────────────────────────
-const FADE_IN_TC        = 0.030;  // 30ms — CUT → ACTIVE
-const FADE_OUT_TC       = 0.020;  // 20ms — ACTIVE → CUT
-const FLICK_FADE_TC     = 0.015;  // 15ms — ACTIVE → FLICK_LOCK
-const HAND_LOSS_FADE_TC = 0.050;  // 50ms — ACTIVE → INACTIVE (mid-note)
+const FADE_IN_TC        = 0.005;  //  5ms — instant note on
+const FADE_OUT_TC       = 0.005;  //  5ms — instant note off
+const FLICK_FADE_TC     = 0.003;  //  3ms — instant staccato
+const HAND_LOSS_FADE_TC = 0.015;  // 15ms — fast mute on hand loss
 const HAND_LOSS_GRACE   = 400;    // ms before clearing state on hand loss
 const FLICK_COOLDOWN    = 500;    // ms before next flick can trigger
 const FLICK_LOCK_AUTO   = 300;    // ms before auto-release if pinch held
@@ -75,7 +81,7 @@ export class GestureController {
   private _prevState: GestureState = GestureState.INACTIVE;
 
   // ── Pinch ──
-  private pinchFilter = new OneEuroFilter(3.0, 0.05, 1.0); // smoother pinch distance
+  private pinchFilter = new OneEuroFilter(8.0, 0.5, 1.0); // high responsiveness for pinch
   private _pinchDistance = 0;
   private _isPinched = false;       // current debounced pinch state
   private pinchRawState = false;    // what the raw distance says
@@ -164,7 +170,7 @@ export class GestureController {
     const rawPinchDist = tipDist * Math.max(this.canvasWidth, this.canvasHeight);
     this._pinchDistance = this.pinchFilter.filter(rawPinchDist, tSec);
 
-    // ── Hysteresis on ratio ──
+    // ── Hysteresis on ratio (NO debounce — instant response) ──
     let rawPinched: boolean;
     if (this._isPinched) {
       // Currently pinched → need ratio ABOVE open threshold to release
@@ -174,16 +180,8 @@ export class GestureController {
       rawPinched = pinchRatio < PINCH_CLOSE_RATIO;
     }
 
-    // Debounce: only change state after N consecutive frames agree
-    if (rawPinched !== this._isPinched) {
-      this.pinchDebounceCount++;
-      if (this.pinchDebounceCount >= PINCH_DEBOUNCE_FRAMES) {
-        this._isPinched = rawPinched;
-        this.pinchDebounceCount = 0;
-      }
-    } else {
-      this.pinchDebounceCount = 0;
-    }
+    // Instant state change — zero debounce for maximum responsiveness
+    this._isPinched = rawPinched;
 
     const isPinched = this._isPinched;
 

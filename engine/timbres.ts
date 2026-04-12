@@ -297,7 +297,7 @@ export const TIMBRE_PROFILES = {
 
   brass: {
     label: 'Brass',
-    description: 'Rich, powerful brass ensemble',
+    description: 'Rich brass ensemble — 3-voice detuned with soft saturation',
     harmonics: [
       0,
       1.0000, 0.8800, 0.7200, 0.5900, 0.4700,
@@ -306,24 +306,24 @@ export const TIMBRE_PROFILES = {
       0.0030, 0.0015, 0.0008, 0.0004, 0, 0, 0, 0
     ],
     acoustics: {
-      detuneCents: [0, +12, -12],
+      detuneCents: [0, +6, -6],      // Tighter ensemble spread (matched to sample processing)
       oscLevels: [0.45, 0.35, 0.35],
       lpFreq: 4500,
       lpQ: 1.0,
-      vibDepth: 2.0,
-      vibRate: 5.2,
-      saturation: 0.55,
+      vibDepth: 2.0,                  // cents depth on detune AudioParam
+      vibRate: 5.2,                   // Hz
+      saturation: 0.33,               // ~equivalent to tanh(1.65x) drive
       tremoloRate: 0,
       tremoloDepth: 0,
-      noiseLevel: 0.030,
-      noiseFilterFreq: 2500,
+      noiseLevel: 0.030,              // 3% breath noise
+      noiseFilterFreq: 2500,          // Bandpass center for breath character
       noiseFilterQ: 0.8,
       formants: null,
       formantBandwidths: null,
       formantGains: null,
       hpFreq: 80,
       attackFeel: 'soft' as const,
-      reverbMix: 0.30,
+      reverbMix: 0.30,                // 30% wet
     } as TimbreAcoustics,
   },
 

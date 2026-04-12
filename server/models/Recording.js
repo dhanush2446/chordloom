@@ -18,6 +18,10 @@ const recordingSchema = new mongoose.Schema(
       type: String, // Base64 Data URI matching standard
       required: [true, 'Recording audio data is missing'],
     },
+    midiData: {
+      type: String, // Base64 Data URI matching standard (optional)
+      required: false,
+    },
     duration: {
       type: Number, // duration in seconds
       default: 0,

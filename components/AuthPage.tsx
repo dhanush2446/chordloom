@@ -1,4 +1,5 @@
 import React, { useState } from 'react';
+import { API_URL } from '../config/api';
 
 interface AuthUser {
   id: string;
@@ -45,7 +46,7 @@ export const AuthPage: React.FC<Props> = ({ onAuth }) => {
     setLoading(true);
 
     try {
-      const endpoint = mode === 'login' ? '/api/auth/login' : '/api/auth/register';
+      const endpoint = mode === 'login' ? `${API_URL}/api/auth/login` : `${API_URL}/api/auth/register`;
       const body = mode === 'login'
         ? { email, password }
         : { name: name.trim(), email, password };

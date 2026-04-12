@@ -14,7 +14,7 @@ router.use(protect);
 router.get('/', async (req, res) => {
   try {
     const recordings = await Recording.find({ user: req.user.id })
-      .select('-audioData') // Exclude audio data to keep the list fast
+      .select('-audioData -midiData') // Exclude audio and midi data to keep the list fast
       .sort({ createdAt: -1 });
       
     res.json(recordings);
@@ -50,7 +50,7 @@ router.get('/:id', async (req, res) => {
  */
 router.post('/', async (req, res) => {
   try {
-    const { title, audioData, duration } = req.body;
+    const { title, audioData, midiData, duration } = req.body;
     
     if (!audioData) {
       return res.status(400).json({ error: 'Audio data is required' });
@@ -60,12 +60,14 @@ router.post('/', async (req, res) => {
       user: req.user.id,
       title: title || 'Untitled Session',
       audioData,
+      midiData,
       duration: duration || 0
     });
 
-    // Don't send back the huge audio string
+    // Don't send back the huge audio/midi string
     const response = recording.toObject();
     delete response.audioData;
+    delete response.midiData;
     
     res.status(201).json(response);
   } catch (err) {

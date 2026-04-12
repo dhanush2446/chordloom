@@ -5,6 +5,7 @@ import { GestureState } from '../engine/gestureState';
 import { downloadMidi } from '../engine/midiExporter';
 import { AuthUser } from '../types';
 import { ProfileDropdown } from './ProfileDropdown';
+import { API_URL } from '../config/api';
 
 interface Props {
   onExit: () => void;
@@ -18,7 +19,7 @@ export const InstrumentPage: React.FC<Props> = ({ onExit, user, onLogout }) => {
     gestureState: GestureState.INACTIVE as GestureState,
     octaveBand: '', pinchDist: 0,
   });
-  const [selectedTimbres, setSelectedTimbres] = useState<Set<TimbreKey>>(new Set(['pureSine']));
+  const [selectedTimbre, setSelectedTimbre] = useState<TimbreKey>('pureSine');
   const [showHelp, setShowHelp] = useState(false);
   const [showSettings, setShowSettings] = useState(false);
   const [settings, setSettings] = useState({
@@ -26,10 +27,9 @@ export const InstrumentPage: React.FC<Props> = ({ onExit, user, onLogout }) => {
     pitchExponent: 1.2,
   });
 
-  // Computed timbres array (stable reference via useMemo)
-  const timbresArray = useMemo(() => Array.from(selectedTimbres), [selectedTimbres]);
-  const isOrchestraMode = selectedTimbres.size > 1;
-  
+  // Single timbre as array (for ThereminCore compatibility)
+  const timbresArray = useMemo(() => [selectedTimbre], [selectedTimbre]);
+
   // Recording State
   const [isRecording, setIsRecording] = useState(false);
   const [recordingBlob, setRecordingBlob] = useState<Blob | null>(null);
@@ -40,66 +40,37 @@ export const InstrumentPage: React.FC<Props> = ({ onExit, user, onLogout }) => {
   const [midiBlob, setMidiBlob] = useState<Blob | null>(null);
   const [showMidiToast, setShowMidiToast] = useState(false);
 
-  const handleTimbreClick = useCallback((key: TimbreKey, ctrlKey: boolean) => {
-    setSelectedTimbres(prev => {
-      if (ctrlKey) {
-        // Ctrl+Click: toggle in/out of set
-        const next = new Set(prev);
-        if (next.has(key)) {
-          // Don't allow deselecting the last one
-          if (next.size > 1) next.delete(key);
-        } else {
-          next.add(key);
-        }
-        return next;
-      } else {
-        // Regular click: single select
-        return new Set([key]);
-      }
-    });
-  }, []);
-
-  const removeTimbre = useCallback((key: TimbreKey) => {
-    setSelectedTimbres(prev => {
-      if (prev.size <= 1) return prev; // Can't remove the last one
-      const next = new Set(prev);
-      next.delete(key);
-      return next;
-    });
-  }, []);
-
-  const clearToSingle = useCallback(() => {
-    setSelectedTimbres(prev => {
-      const first = prev.values().next().value || 'pureSine';
-      return new Set([first] as TimbreKey[]);
-    });
-  }, []);
-
-
-
   const handleSaveRecording = async () => {
     if (!recordingBlob) return;
     setIsSavingRecord(true);
     try {
-      const reader = new FileReader();
-      reader.readAsDataURL(recordingBlob);
-      reader.onloadend = async () => {
-        const base64data = reader.result;
-        const token = localStorage.getItem('cl_token');
+      const readAsBase64 = (blob: Blob | null) => new Promise<string | null>((resolve) => {
+        if (!blob) return resolve(null);
+        const reader = new FileReader();
+        reader.readAsDataURL(blob);
+        reader.onloadend = () => resolve(reader.result as string);
+      });
+
+      const [audioBase64, midiBase64] = await Promise.all([
+        readAsBase64(recordingBlob),
+        readAsBase64(midiBlob)
+      ]);
+      
+      const token = localStorage.getItem('cl_token');
         
-        await fetch('/api/recordings', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` },
-          body: JSON.stringify({
-            title: recordingTitle || 'Untitled Session',
-            audioData: base64data
-          })
-        });
+      await fetch(`${API_URL}/api/recordings`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` },
+        body: JSON.stringify({
+          title: recordingTitle || 'Untitled Session',
+          audioData: audioBase64,
+          midiData: midiBase64
+        })
+      });
         
-        setRecordingBlob(null);
-        setRecordingTitle('');
-        setIsSavingRecord(false);
-      };
+      setRecordingBlob(null);
+      setRecordingTitle('');
+      setIsSavingRecord(false);
     } catch(e) {
       console.error('Failed to save recording:', e);
       setIsSavingRecord(false);
@@ -248,72 +219,21 @@ export const InstrumentPage: React.FC<Props> = ({ onExit, user, onLogout }) => {
       <div className="side-panel side-panel-left">
         <div className="panel-section-label">Timbre</div>
 
-        {/* Orchestra Mode Badge */}
-        {isOrchestraMode && (
-          <div className="orchestra-badge">
-            <span className="orchestra-badge-icon">🎻</span>
-            <span>Orchestra Mode</span>
-            <span className="orchestra-badge-count">{selectedTimbres.size}</span>
-          </div>
-        )}
-
-        {/* Hint text */}
-        <p style={{ fontFamily: 'var(--font-ui)', fontSize: '0.65rem', color: 'var(--color-cedar)', marginBottom: 8, opacity: 0.7 }}>
-          Ctrl+Click to layer multiple instruments
-        </p>
-
         {TIMBRE_KEYS.map((key) => (
           <button
             key={key}
-            className={`inst-timbre-btn ${selectedTimbres.has(key) ? (selectedTimbres.size === 1 ? 'active' : 'selected') : ''}`}
-            onClick={(e) => handleTimbreClick(key, e.ctrlKey || e.metaKey)}
-            aria-pressed={selectedTimbres.has(key)}
+            className={`inst-timbre-btn ${selectedTimbre === key ? 'active' : ''}`}
+            onClick={() => setSelectedTimbre(key)}
+            aria-pressed={selectedTimbre === key}
           >
-            {selectedTimbres.has(key) && selectedTimbres.size > 1 && (
-              <span className="timbre-check">✓</span>
-            )}
             {TIMBRE_PROFILES[key].label}
           </button>
         ))}
 
-        {/* Selected instrument chips */}
-        {isOrchestraMode && (
-          <>
-            <div className="panel-divider" />
-            <div className="panel-section-label">Selected Instruments</div>
-            <div className="orchestra-chips">
-              {timbresArray.map((key) => (
-                <div key={key} className="orchestra-chip">
-                  <span>{TIMBRE_PROFILES[key].label}</span>
-                  <button
-                    className="orchestra-chip-remove"
-                    onClick={() => removeTimbre(key)}
-                    aria-label={`Remove ${TIMBRE_PROFILES[key].label}`}
-                  >
-                    ×
-                  </button>
-                </div>
-              ))}
-            </div>
-            <button
-              onClick={clearToSingle}
-              style={{
-                marginTop: 8, fontFamily: 'var(--font-ui)', fontSize: '0.7rem',
-                color: 'var(--color-cedar)', textDecoration: 'underline',
-                background: 'none', border: 'none', cursor: 'pointer',
-              }}
-            >
-              Clear to Single
-            </button>
-          </>
-        )}
-
-        {/* Description for the primary timbre */}
-        {!isOrchestraMode && selectedTimbres.size === 1 && (
-          <p style={{ fontFamily: 'var(--font-body)', fontStyle: 'italic', fontSize: '0.75rem', color: 'var(--color-cedar)', marginTop: 8 }}>
-            {TIMBRE_PROFILES[timbresArray[0]].description}
-          </p>
-        )}
+        {/* Description for the selected timbre */}
+        <p style={{ fontFamily: 'var(--font-body)', fontStyle: 'italic', fontSize: '0.75rem', color: 'var(--color-cedar)', marginTop: 8 }}>
+          {TIMBRE_PROFILES[selectedTimbre].description}
+        </p>
 
         <div className="panel-divider" />
 
