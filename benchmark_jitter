@@ -1,0 +1,87 @@
+class OneEuroFilter {
+    constructor(minCutoff = 0.4, beta = 0.003, dCutoff = 1.0) {
+        this.minCutoff = minCutoff;
+        this.beta = beta;
+        this.dCutoff = dCutoff;
+        this.xPrev = null;
+        this.dxPrev = 0;
+        this.tPrev = null;
+    }
+
+    alpha(dt, cutoff) {
+        const tau = 1.0 / (2 * Math.PI * cutoff);
+        return 1.0 / (1.0 + tau / dt);
+    }
+
+    filter(x, t) {
+        if (this.tPrev === null) {
+            this.xPrev = x;
+            this.tPrev = t;
+            return x;
+        }
+        const dt = t - this.tPrev;
+        if (dt <= 0) return x;
+
+        const dx = (x - this.xPrev) / dt;
+        const aD = this.alpha(dt, this.dCutoff);
+        const dxHat = aD * dx + (1 - aD) * this.dxPrev;
+
+        const cutoff = this.minCutoff + this.beta * Math.abs(dxHat);
+        const aX = this.alpha(dt, cutoff);
+        const xHat = aX * x + (1 - aX) * this.xPrev;
+
+        this.xPrev = xHat;
+        this.dxPrev = dxHat;
+        this.tPrev = t;
+        return xHat;
+    }
+}
+
+// 1. Simulate a user holding their hand perfectly still attempting to hit 440 Hz
+const TARGET_FREQ = 440.0;
+const SAMPLES = 2000;
+const FPS = 30;
+const DT = 1.0 / FPS; // 33ms per frame updating
+
+// Generate fake MediaPipe tracking noise (Gaussian-like tracking jitter)
+function generateNoisyFrames() {
+    let frames = [];
+    let currentTime = 0;
+    for (let i = 0; i < SAMPLES; i++) {
+        let noise = (Math.random() - 0.5) * 30;
+        frames.push({ val: TARGET_FREQ + noise, time: currentTime });
+        currentTime += DT;
+    }
+    return frames;
+}
+
+const rawFrames = generateNoisyFrames();
+const filter = new OneEuroFilter(0.4, 0.003, 1.0);
+let filteredFrames = [];
+
+rawFrames.forEach(frame => {
+    let clean = filter.filter(frame.val, frame.time);
+    filteredFrames.push(clean);
+});
+
+function calcStdDev(arr) {
+    const mean = arr.reduce((a, b) => a + b) / arr.length;
+    const avgSqDiff = arr.map(val => Math.pow(val - mean, 2)).reduce((a, b) => a + b) / arr.length;
+    return Math.sqrt(avgSqDiff);
+}
+
+const rawDev = calcStdDev(rawFrames.map(f => f.val));
+const cleanDev = calcStdDev(filteredFrames);
+
+console.log("==========================================");
+console.log(" CHORD LOOM — JITTER SUPPRESSION BENCHMARK ");
+console.log("==========================================");
+console.log(`Simulation: User holding steady pitch over ${SAMPLES} frames @ ${FPS} FPS.`);
+console.log(`Base Target Frequency : ${TARGET_FREQ} Hz`);
+console.log("------------------------------------------");
+console.log(`RAW MediaPipe Jitter (Std Deviation) : ±${rawDev.toFixed(4)} Hz`);
+console.log(`One-Euro Filtered (Std Deviation)    : ±${cleanDev.toFixed(4)} Hz`);
+console.log("------------------------------------------");
+let reduction = ((rawDev - cleanDev) / rawDev) * 100;
+console.log(`Total Tracking Noise Reduction       : ${reduction.toFixed(2)} %`);
+console.log("==========================================");

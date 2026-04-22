@@ -27,24 +27,28 @@ app.get('/api/health', (_req, res) => {
   res.json({ status: 'ok', timestamp: new Date().toISOString() });
 });
 
-// ── MongoDB Connection ───────────────────────────────────────
-const MONGODB_URI = process.env.MONGODB_URI;
+// ── MongoDB Connection (only for local dev) ─────────────────
+if (!process.env.VERCEL) {
+  const MONGODB_URI = process.env.MONGODB_URI;
 
-if (!MONGODB_URI) {
-  console.error('❌ MONGODB_URI is not set in server/.env');
-  console.error('   Please add your MongoDB Atlas connection string.');
-  process.exit(1);
+  if (!MONGODB_URI) {
+    console.error('❌ MONGODB_URI is not set in server/.env');
+    console.error('   Please add your MongoDB Atlas connection string.');
+    process.exit(1);
+  }
+
+  mongoose
+    .connect(MONGODB_URI)
+    .then(() => {
+      console.log('✅ Connected to MongoDB Atlas');
+      app.listen(PORT, () => {
+        console.log(`🎵 Chord Loom API running on http://localhost:${PORT}`);
+      });
+    })
+    .catch((err) => {
+      console.error('❌ MongoDB connection failed:', err.message);
+      process.exit(1);
+    });
 }
 
-mongoose
-  .connect(MONGODB_URI)
-  .then(() => {
-    console.log('✅ Connected to MongoDB Atlas');
-    app.listen(PORT, () => {
-      console.log(`🎵 Chord Loom API running on http://localhost:${PORT}`);
-    });
-  })
-  .catch((err) => {
-    console.error('❌ MongoDB connection failed:', err.message);
-    process.exit(1);
-  });
+export default app;

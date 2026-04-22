@@ -205,7 +205,7 @@ export const AuthPage: React.FC<Props> = ({ onAuth }) => {
           <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" style={{ opacity: 0.4 }}>
             <path d="M9 18V5l12-2v13" /><circle cx="6" cy="18" r="3" /><circle cx="18" cy="16" r="3" />
           </svg>
-          <span>Play music with just your hands</span>
+          <span>Loom Aura beyond touch</span>
         </div>
       </div>
     </div>

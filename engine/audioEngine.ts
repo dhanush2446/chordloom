@@ -31,7 +31,7 @@
  *                                                      [GestureGain] → [Destination]
  */
 
-import { TIMBRE_PROFILES, TimbreKey, TimbreAcoustics } from './timbres';
+import { TIMBRE_PROFILES, TimbreKey, TimbreAcoustics, getTimbreProfile, buildCustomTimbreProfile, CustomTimbreParams } from './timbres';
 
 // ── Sample playback types (preserved for acousticBrass) ──────────
 interface SampleBand { note: string; freq: number; }
@@ -406,6 +406,17 @@ export class AudioEngine {
     }
   }
 
+  /** Build a PeriodicWave for a custom timbre and cache it */
+  buildCustomWave(key: string, harmonics: number[]): void {
+    if (!this.ctx) return;
+    const n = harmonics.length;
+    const real = new Float32Array(n);
+    const imag = new Float32Array(n);
+    for (let i = 0; i < n; i++) imag[i] = harmonics[i];
+    const wave = this.ctx.createPeriodicWave(real, imag, { disableNormalization: false });
+    this.waves.set(key, wave);
+  }
+
   // ═══════════════════════════════════════════════════════════════
   // ═══════════════════════════════════════════════════════════════
   //  MULTISAMPLE SAMPLER — 3 brass samples with crossfading
@@ -598,9 +609,16 @@ export class AudioEngine {
 
     // Also set the primary oscillators to the first synth key (backward compat)
     if (synthKeys.length > 0) {
-      const wave = this.waves.get(synthKeys[0]);
+      let wave = this.waves.get(synthKeys[0]);
+      if (!wave) {
+        const profile = getTimbreProfile(synthKeys[0]);
+        if (profile && this.ctx) {
+          this.buildCustomWave(synthKeys[0], profile.harmonics);
+          wave = this.waves.get(synthKeys[0]);
+        }
+      }
       if (wave) {
-        this.oscillators.forEach(osc => osc.setPeriodicWave(wave));
+        this.oscillators.forEach(osc => osc.setPeriodicWave(wave!));
       }
       this._adaptToTimbre(synthKeys[0], now);
     }
@@ -611,7 +629,8 @@ export class AudioEngine {
 
   /** Helper: get acoustics for a timbre key */
   private _getAcoustics(key: TimbreKey): TimbreAcoustics {
-    return (TIMBRE_PROFILES[key] as any).acoustics;
+    const profile = getTimbreProfile(key);
+    return profile.acoustics;
   }
 
   /** Build an independent instrument layer with its own signal chain */
@@ -666,10 +685,17 @@ export class AudioEngine {
       oscGains.push(gain);
     }
 
-    // Set the wave for this timbre
-    const wave = this.waves.get(key);
+    // Set the wave for this timbre (auto-build for custom timbres)
+    let wave = this.waves.get(key);
+    if (!wave) {
+      const profile = getTimbreProfile(key);
+      if (profile && this.ctx) {
+        this.buildCustomWave(key, profile.harmonics);
+        wave = this.waves.get(key);
+      }
+    }
     if (wave) {
-      oscillators.forEach(osc => osc.setPeriodicWave(wave));
+      oscillators.forEach(osc => osc.setPeriodicWave(wave!));
     }
 
     // Match frequency to current primary oscillators
@@ -1011,6 +1037,150 @@ export class AudioEngine {
       this.mediaRecorder.stop();
     });
   }
+
+  // ═══════════════════════════════════════════════════════════════
+  //  SOUND DESIGNER PREVIEW
+  // ═══════════════════════════════════════════════════════════════
+
+  private _previewOscs: OscillatorNode[] = [];
+  private _previewGains: GainNode[] = [];
+  private _previewMaster: GainNode | null = null;
+  private _previewWaveshaper: WaveShaperNode | null = null;
+  private _previewLP: BiquadFilterNode | null = null;
+  private _previewHP: BiquadFilterNode | null = null;
+  private _previewNoiseSource: AudioBufferSourceNode | null = null;
+  private _previewNoiseGain: GainNode | null = null;
+  private _previewActive = false;
+
+  /** Start a preview tone at the given frequency using custom params */
+  startPreview(params: CustomTimbreParams, frequency: number = 440): void {
+    if (!this.ctx) return;
+    this.stopPreview();
+
+    const profile = buildCustomTimbreProfile(params);
+    const ac = profile.acoustics;
+    const now = this.ctx.currentTime;
+
+    // Master gain for preview
+    this._previewMaster = this.ctx.createGain();
+    this._previewMaster.gain.value = 0;
+    this._previewMaster.connect(this.ctx.destination);
+
+    // Waveshaper
+    this._previewWaveshaper = this.ctx.createWaveShaper();
+    this._previewWaveshaper.curve = this._generateSaturationCurve(ac.saturation);
+    this._previewWaveshaper.oversample = '4x';
+
+    // Filters
+    this._previewLP = this.ctx.createBiquadFilter();
+    this._previewLP.type = 'lowpass';
+    this._previewLP.frequency.value = ac.lpFreq;
+    this._previewLP.Q.value = ac.lpQ;
+
+    this._previewHP = this.ctx.createBiquadFilter();
+    this._previewHP.type = 'highpass';
+    this._previewHP.frequency.value = ac.hpFreq;
+    this._previewHP.Q.value = 0.5;
+
+    // Chain: oscs → waveshaper → LP → HP → master
+    this._previewWaveshaper.connect(this._previewLP);
+    this._previewLP.connect(this._previewHP);
+    this._previewHP.connect(this._previewMaster);
+
+    // Build PeriodicWave
+    const n = profile.harmonics.length;
+    const real = new Float32Array(n);
+    const imag = new Float32Array(n);
+    for (let i = 0; i < n; i++) imag[i] = profile.harmonics[i];
+    const wave = this.ctx.createPeriodicWave(real, imag, { disableNormalization: false });
+
+    // 3 detuned oscillators
+    for (let i = 0; i < 3; i++) {
+      const osc = this.ctx.createOscillator();
+      const gain = this.ctx.createGain();
+      osc.setPeriodicWave(wave);
+      osc.frequency.value = frequency;
+      osc.detune.value = ac.detuneCents[i];
+      gain.gain.value = ac.oscLevels[i];
+      osc.connect(gain);
+      gain.connect(this._previewWaveshaper!);
+      osc.start();
+      this._previewOscs.push(osc);
+      this._previewGains.push(gain);
+    }
+
+    // Noise
+    if (ac.noiseLevel > 0) {
+      const bufferSize = this.ctx.sampleRate * 2;
+      const noiseBuffer = this.ctx.createBuffer(1, bufferSize, this.ctx.sampleRate);
+      const data = noiseBuffer.getChannelData(0);
+      for (let i = 0; i < bufferSize; i++) data[i] = Math.random() * 2 - 1;
+      this._previewNoiseSource = this.ctx.createBufferSource();
+      this._previewNoiseSource.buffer = noiseBuffer;
+      this._previewNoiseSource.loop = true;
+      this._previewNoiseGain = this.ctx.createGain();
+      this._previewNoiseGain.gain.value = ac.noiseLevel;
+      const nf = this.ctx.createBiquadFilter();
+      nf.type = 'bandpass';
+      nf.frequency.value = ac.noiseFilterFreq;
+      nf.Q.value = 1.0;
+      this._previewNoiseSource.connect(nf);
+      nf.connect(this._previewNoiseGain);
+      this._previewNoiseGain.connect(this._previewMaster);
+      this._previewNoiseSource.start();
+    }
+
+    // Fade in
+    this._previewMaster.gain.setTargetAtTime(0.25, now, 0.05);
+    this._previewActive = true;
+  }
+
+  /** Update preview parameters live (while preview is playing) */
+  updatePreview(params: CustomTimbreParams, frequency: number = 440): void {
+    if (!this._previewActive || !this.ctx) {
+      this.startPreview(params, frequency);
+      return;
+    }
+    // Rebuild — simple approach: stop and restart
+    this.stopPreview();
+    this.startPreview(params, frequency);
+  }
+
+  /** Stop the preview tone */
+  stopPreview(): void {
+    if (!this.ctx) return;
+    const now = this.ctx.currentTime;
+
+    if (this._previewMaster) {
+      this._previewMaster.gain.setTargetAtTime(0, now, 0.03);
+    }
+
+    // Schedule cleanup after fade out
+    setTimeout(() => {
+      for (const osc of this._previewOscs) {
+        try { osc.stop(); } catch {}
+      }
+      if (this._previewNoiseSource) {
+        try { this._previewNoiseSource.stop(); } catch {}
+      }
+      this._previewOscs = [];
+      this._previewGains = [];
+      this._previewWaveshaper?.disconnect();
+      this._previewLP?.disconnect();
+      this._previewHP?.disconnect();
+      this._previewMaster?.disconnect();
+      this._previewNoiseGain?.disconnect();
+      this._previewWaveshaper = null;
+      this._previewLP = null;
+      this._previewHP = null;
+      this._previewMaster = null;
+      this._previewNoiseSource = null;
+      this._previewNoiseGain = null;
+      this._previewActive = false;
+    }, 100);
+  }
+
+  get isPreviewActive() { return this._previewActive; }
 
   // ═══════════════════════════════════════════════════════════════
   //  CLEANUP

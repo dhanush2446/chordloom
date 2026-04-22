@@ -115,9 +115,8 @@ export const HeroSection: React.FC<Props> = ({ onStart }) => {
           </p>
 
           <h1 className="hero-headline">
-            <span className="anim-fade-up visible" style={{ display: 'block', animationDelay: '400ms' }}>Play Music</span>
-            <span className="anim-fade-up visible" style={{ display: 'block', animationDelay: '500ms' }}>With Your</span>
-            <span className="anim-fade-up visible text-gold-gradient" style={{ display: 'block', animationDelay: '600ms' }}>Hands</span>
+            <span className="anim-fade-up visible" style={{ display: 'block', animationDelay: '400ms' }}>Loom Aura</span>
+            <span className="anim-fade-up visible text-gold-gradient" style={{ display: 'block', animationDelay: '500ms' }}>Beyond Touch</span>
           </h1>
 
           <p className="hero-sub anim-fade-up visible" style={{ animationDelay: '700ms' }}>

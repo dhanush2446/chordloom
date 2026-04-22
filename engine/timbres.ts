@@ -513,7 +513,209 @@ export const TIMBRE_PROFILES = {
 
 } as const;
 
-export type TimbreKey = keyof typeof TIMBRE_PROFILES;
+export type BuiltinTimbreKey = keyof typeof TIMBRE_PROFILES;
+export type TimbreKey = BuiltinTimbreKey | string;
 
-/** Ordered list of all timbre keys for UI rendering */
-export const TIMBRE_KEYS: TimbreKey[] = Object.keys(TIMBRE_PROFILES) as TimbreKey[];
+/** Ordered list of all built-in timbre keys for UI rendering */
+export const TIMBRE_KEYS: BuiltinTimbreKey[] = Object.keys(TIMBRE_PROFILES) as BuiltinTimbreKey[];
+
+// ═══════════════════════════════════════════════════════════════
+//  CUSTOM TIMBRE SYSTEM — User-Designed Instruments
+// ═══════════════════════════════════════════════════════════════
+
+/** Parameters exposed to the user in the Sound Designer */
+export interface CustomTimbreParams {
+  name: string;
+  /** Harmonic levels [fundamental, 2nd, 3rd, 4th, 5th] — each 0-1 */
+  harmonics: [number, number, number, number, number];
+  /** Detune spread in cents (applied as [0, +spread, -spread]) */
+  detuneSpread: number;
+  /** Side oscillator balance (0 = center only, 1 = equal) */
+  oscBalance: number;
+  /** Lowpass filter cutoff Hz */
+  lpFreq: number;
+  /** Lowpass Q resonance */
+  lpQ: number;
+  /** Highpass filter cutoff Hz */
+  hpFreq: number;
+  /** Vibrato depth in cents */
+  vibDepth: number;
+  /** Vibrato rate in Hz */
+  vibRate: number;
+  /** Soft saturation drive 0-1 */
+  saturation: number;
+  /** Tremolo rate Hz (0 = off) */
+  tremoloRate: number;
+  /** Tremolo depth 0-0.5 */
+  tremoloDepth: number;
+  /** Noise injection level 0-0.1 */
+  noiseLevel: number;
+  /** Noise filter center frequency Hz */
+  noiseFilterFreq: number;
+  /** Reverb wet/dry mix 0-1 */
+  reverbMix: number;
+  /** Timestamp when created */
+  createdAt?: number;
+}
+
+/** Default custom timbre parameters — a clean starting point */
+export const DEFAULT_CUSTOM_PARAMS: CustomTimbreParams = {
+  name: 'My Sound',
+  harmonics: [1.0, 0.5, 0.3, 0.2, 0.1],
+  detuneSpread: 7,
+  oscBalance: 0.5,
+  lpFreq: 3200,
+  lpQ: 0.7,
+  hpFreq: 60,
+  vibDepth: 2.5,
+  vibRate: 5.5,
+  saturation: 0.3,
+  tremoloRate: 0,
+  tremoloDepth: 0,
+  noiseLevel: 0,
+  noiseFilterFreq: 3000,
+  reverbMix: 0.35,
+};
+
+/** Build a full timbre profile from user-facing CustomTimbreParams */
+export function buildCustomTimbreProfile(params: CustomTimbreParams) {
+  const centerGain = 1.0 - params.oscBalance * 0.5;
+  const sideGain = params.oscBalance * 0.5;
+
+  // Extend the 5 user harmonics to a full 24-element array
+  const fullHarmonics = new Array(24).fill(0);
+  fullHarmonics[0] = 0; // DC offset
+  for (let i = 0; i < 5; i++) {
+    fullHarmonics[i + 1] = params.harmonics[i];
+  }
+  // Natural harmonic decay for remaining slots
+  for (let i = 6; i < 24; i++) {
+    fullHarmonics[i] = Math.max(0, params.harmonics[4] * Math.pow(0.65, i - 5));
+  }
+
+  return {
+    label: params.name,
+    description: `Custom instrument: ${params.name}`,
+    harmonics: fullHarmonics,
+    acoustics: {
+      detuneCents: [0, +params.detuneSpread, -params.detuneSpread] as [number, number, number],
+      oscLevels: [centerGain, sideGain, sideGain] as [number, number, number],
+      lpFreq: params.lpFreq,
+      lpQ: params.lpQ,
+      vibDepth: params.vibDepth,
+      vibRate: params.vibRate,
+      saturation: params.saturation,
+      tremoloRate: params.tremoloRate,
+      tremoloDepth: params.tremoloDepth,
+      noiseLevel: params.noiseLevel,
+      noiseFilterFreq: params.noiseFilterFreq,
+      noiseFilterQ: 1.0,
+      formants: null,
+      formantBandwidths: null,
+      formantGains: null,
+      hpFreq: params.hpFreq,
+      attackFeel: 'instant' as const,
+      reverbMix: params.reverbMix,
+    } as TimbreAcoustics,
+  };
+}
+
+// ── Runtime Custom Timbre Registry ─────────────────────────────
+
+const _customTimbreRegistry: Map<string, ReturnType<typeof buildCustomTimbreProfile>> = new Map();
+
+/** Register a custom timbre at runtime (makes it available to AudioEngine) */
+export function registerCustomTimbre(key: string, params: CustomTimbreParams): void {
+  _customTimbreRegistry.set(key, buildCustomTimbreProfile(params));
+}
+
+/** Unregister a custom timbre */
+export function unregisterCustomTimbre(key: string): void {
+  _customTimbreRegistry.delete(key);
+}
+
+/** Get a timbre profile — checks custom registry first, then built-ins */
+export function getTimbreProfile(key: TimbreKey) {
+  if (_customTimbreRegistry.has(key)) return _customTimbreRegistry.get(key)!;
+  return (TIMBRE_PROFILES as any)[key] ?? TIMBRE_PROFILES.pureSine;
+}
+
+/** Check if a key is a custom timbre */
+export function isCustomTimbre(key: string): boolean {
+  return _customTimbreRegistry.has(key);
+}
+
+/** Get all registered custom timbre keys */
+export function getCustomTimbreKeys(): string[] {
+  return Array.from(_customTimbreRegistry.keys());
+}
+
+// ── LocalStorage persistence for custom instruments ────────────
+
+const STORAGE_KEY = 'cl_custom_instruments';
+
+export interface SavedInstrument {
+  id: string;
+  params: CustomTimbreParams;
+  createdAt: number;
+}
+
+/** Load saved instruments from localStorage and register them */
+export function loadSavedInstruments(): SavedInstrument[] {
+  try {
+    const data = localStorage.getItem(STORAGE_KEY);
+    if (!data) return [];
+    const instruments: SavedInstrument[] = JSON.parse(data);
+    // Register each in the runtime registry
+    for (const inst of instruments) {
+      registerCustomTimbre(inst.id, inst.params);
+    }
+    return instruments;
+  } catch {
+    return [];
+  }
+}
+
+/** Save an instrument to localStorage */
+export function saveInstrument(instrument: SavedInstrument): SavedInstrument[] {
+  const instruments = loadSavedInstrumentsRaw();
+  const idx = instruments.findIndex(i => i.id === instrument.id);
+  if (idx >= 0) {
+    instruments[idx] = instrument;
+  } else {
+    instruments.push(instrument);
+  }
+  localStorage.setItem(STORAGE_KEY, JSON.stringify(instruments));
+  registerCustomTimbre(instrument.id, instrument.params);
+  return instruments;
+}
+
+/** Delete an instrument from localStorage */
+export function deleteInstrument(id: string): SavedInstrument[] {
+  const instruments = loadSavedInstrumentsRaw().filter(i => i.id !== id);
+  localStorage.setItem(STORAGE_KEY, JSON.stringify(instruments));
+  unregisterCustomTimbre(id);
+  return instruments;
+}
+
+/** Rename an instrument */
+export function renameInstrument(id: string, newName: string): SavedInstrument[] {
+  const instruments = loadSavedInstrumentsRaw();
+  const inst = instruments.find(i => i.id === id);
+  if (inst) {
+    inst.params.name = newName;
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(instruments));
+    registerCustomTimbre(id, inst.params);
+  }
+  return instruments;
+}
+
+/** Raw load without registering (avoids double registration) */
+function loadSavedInstrumentsRaw(): SavedInstrument[] {
+  try {
+    const data = localStorage.getItem(STORAGE_KEY);
+    return data ? JSON.parse(data) : [];
+  } catch {
+    return [];
+  }
+}

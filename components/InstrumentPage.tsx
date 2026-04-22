@@ -1,6 +1,7 @@
 import React, { useState, useCallback, useRef, useEffect, useMemo } from 'react';
 import { ThereminCore } from './ThereminCore';
 import { TIMBRE_PROFILES, TIMBRE_KEYS, TimbreKey } from '../engine/timbres';
+import { loadSavedInstruments, SavedInstrument, isCustomTimbre } from '../engine/timbres';
 import { GestureState } from '../engine/gestureState';
 import { downloadMidi } from '../engine/midiExporter';
 import { AuthUser } from '../types';
@@ -9,23 +10,41 @@ import { API_URL } from '../config/api';
 
 interface Props {
   onExit: () => void;
+  onOpenDesigner: () => void;
   user: AuthUser;
   onLogout: () => void;
+  initialCustomTimbre?: string | null;
+  onCustomTimbreConsumed?: () => void;
 }
 
-export const InstrumentPage: React.FC<Props> = ({ onExit, user, onLogout }) => {
+export const InstrumentPage: React.FC<Props> = ({ onExit, onOpenDesigner, user, onLogout, initialCustomTimbre, onCustomTimbreConsumed }) => {
   const [stats, setStats] = useState({
     freq: 0, vol: 0, note: '',
     gestureState: GestureState.INACTIVE as GestureState,
     octaveBand: '', pinchDist: 0,
   });
-  const [selectedTimbre, setSelectedTimbre] = useState<TimbreKey>('pureSine');
+  const [selectedTimbre, setSelectedTimbre] = useState<TimbreKey>(initialCustomTimbre || 'pureSine');
   const [showHelp, setShowHelp] = useState(false);
   const [showSettings, setShowSettings] = useState(false);
   const [settings, setSettings] = useState({
     octaveSpan: 0.5,
     pitchExponent: 1.2,
   });
+  const [customInstruments, setCustomInstruments] = useState<SavedInstrument[]>([]);
+
+  // Load custom instruments
+  useEffect(() => {
+    const instruments = loadSavedInstruments();
+    setCustomInstruments(instruments);
+  }, []);
+
+  // Handle initial custom timbre from designer
+  useEffect(() => {
+    if (initialCustomTimbre) {
+      setSelectedTimbre(initialCustomTimbre);
+      onCustomTimbreConsumed?.();
+    }
+  }, [initialCustomTimbre, onCustomTimbreConsumed]);
 
   // Single timbre as array (for ThereminCore compatibility)
   const timbresArray = useMemo(() => [selectedTimbre], [selectedTimbre]);
@@ -230,9 +249,49 @@ export const InstrumentPage: React.FC<Props> = ({ onExit, user, onLogout }) => {
           </button>
         ))}
 
+        {/* Custom Instruments Section */}
+        {customInstruments.length > 0 && (
+          <>
+            <div className="panel-divider" />
+            <div className="panel-section-label" style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+              <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round"><path d="M12 2l3.09 6.26L22 9.27l-5 4.87 1.18 6.88L12 17.77l-6.18 3.25L7 14.14 2 9.27l6.91-1.01L12 2z" /></svg>
+              My Instruments
+            </div>
+            {customInstruments.map((inst) => (
+              <button
+                key={inst.id}
+                className={`inst-timbre-btn ${selectedTimbre === inst.id ? 'active' : ''}`}
+                onClick={() => setSelectedTimbre(inst.id)}
+                aria-pressed={selectedTimbre === inst.id}
+              >
+                <span style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                  <span style={{ 
+                    width: 6, height: 6, borderRadius: '50%', 
+                    background: selectedTimbre === inst.id ? 'var(--color-gold)' : 'var(--color-oak)',
+                    flexShrink: 0
+                  }} />
+                  {inst.params.name}
+                </span>
+              </button>
+            ))}
+          </>
+        )}
+
+        <div className="panel-divider" />
+
+        {/* Sound Designer Button */}
+        <button className="sd-open-btn" onClick={onOpenDesigner}>
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round">
+            <path d="M12 3v18M3 12h18M5.63 5.63l12.74 12.74M18.37 5.63L5.63 18.37" />
+          </svg>
+          Sound Designer
+        </button>
+
         {/* Description for the selected timbre */}
         <p style={{ fontFamily: 'var(--font-body)', fontStyle: 'italic', fontSize: '0.75rem', color: 'var(--color-cedar)', marginTop: 8 }}>
-          {TIMBRE_PROFILES[selectedTimbre].description}
+          {isCustomTimbre(selectedTimbre as string)
+            ? customInstruments.find(i => i.id === selectedTimbre)?.params.name || 'Custom instrument'
+            : TIMBRE_PROFILES[selectedTimbre as keyof typeof TIMBRE_PROFILES]?.description || ''}
         </p>
 
         <div className="panel-divider" />

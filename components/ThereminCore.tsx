@@ -1,10 +1,6 @@
-import React, { useRef, useEffect, useState, useCallback } from 'react';
+import React, { useRef, useEffect } from 'react';
 import { AudioEngine } from '../engine/audioEngine';
-import { ThereminEngine, CalibrationData } from '../engine/thereminEngine';
-import {
-  loadCalibration, saveCalibration, clearCalibration,
-  CALIBRATION_STEPS, computeGestureCalibration,
-} from '../engine/calibration';
+import { ThereminEngine } from '../engine/thereminEngine';
 import { GestureController, GestureState } from '../engine/gestureState';
 import { OctaveController } from '../engine/octaveControl';
 import { MidiRecorder } from '../engine/midiExporter';
@@ -43,45 +39,6 @@ export const ThereminCore: React.FC<Props> = ({ onUpdate, timbres, settings, isR
   // Flick flash animation
   const flickFlashRef = useRef(0); // opacity 0–1, decays over 150ms
   const flickFlashStartRef = useRef(0);
-
-  // Calibration state
-  const [calibStep, setCalibStep] = useState(-1);
-  const calibSamplesRef = useRef<any[]>([]);
-  const calibStartRef = useRef(0);
-  const calibDataRef = useRef<Partial<CalibrationData>>({});
-  // Gesture calibration accumulators
-  const gestureCalibRef = useRef<{
-    pinchClosedSamples: number[];
-    pinchOpenSamples: number[];
-    drHighSamples: number[];
-    drLowSamples: number[];
-    flickVelocities: number[];
-    flickPrevY: number;
-    flickPrevT: number;
-  }>({
-    pinchClosedSamples: [],
-    pinchOpenSamples: [],
-    drHighSamples: [],
-    drLowSamples: [],
-    flickVelocities: [],
-    flickPrevY: -1,
-    flickPrevT: 0,
-  });
-
-  // Load saved calibration on mount
-  useEffect(() => {
-    const saved = loadCalibration();
-    if (saved) {
-      engineRef.current.setCalibration(saved);
-      if (saved.pinchThreshold && saved.dynamicRange && saved.flickVelocityThreshold) {
-        gestureRef.current.setCalibration(
-          saved.pinchThreshold,
-          saved.dynamicRange,
-          saved.flickVelocityThreshold,
-        );
-      }
-    }
-  }, []);
 
   // Audio engine lifecycle — created ONCE
   useEffect(() => {
@@ -226,41 +183,29 @@ export const ThereminCore: React.FC<Props> = ({ onUpdate, timbres, settings, isR
 
         engine.setFieldExponent(settingsRef.current?.pitchExponent ?? 1.2);
 
-        // Handle pitch calibration capture
-        if (calibStep === 0 || calibStep === 1) {
-          _captureCalibSample({ area, z: avgZ }, now);
-        } else {
-          const r = engine.mapPitch(area, avgZ, tSec);
-          freq = r.frequency;
-          note = r.note;
-          pitchProx = r.proximity;
-        }
+        const r = engine.mapPitch(area, avgZ, tSec);
+        freq = r.frequency;
+        note = r.note;
+        pitchProx = r.proximity;
 
         // 2. Gesture state machine (pinch + volume + flick)
-        if (calibStep < 0) {
-          const gestureOut = gesture.update(
-            rightHandLm, tSec,
-            audio?.audioContext || null,
-            audio?.gainNode || null,
-          );
-          gState = gestureOut.state;
-          vol = gestureOut.volume;
-          pinchDist = gestureOut.pinchDistance;
+        const gestureOut = gesture.update(
+          rightHandLm, tSec,
+          audio?.audioContext || null,
+          audio?.gainNode || null,
+        );
+        gState = gestureOut.state;
+        vol = gestureOut.volume;
+        pinchDist = gestureOut.pinchDistance;
 
-          // Handle flick flash
-          if (gestureOut.flickTriggered) {
-            flickFlashRef.current = 0.3;
-            flickFlashStartRef.current = now;
-          }
-
-          // Draw visual feedback
-          _drawGestureVisuals(ctx, rightHandLm, gestureOut, width, height);
+        // Handle flick flash
+        if (gestureOut.flickTriggered) {
+          flickFlashRef.current = 0.3;
+          flickFlashStartRef.current = now;
         }
 
-        // Handle gesture calibration steps
-        if (calibStep >= 2 && calibStep <= 6) {
-          _captureGestureCalibSample(rightHandLm, tSec, now, width, height);
-        }
+        // Draw visual feedback
+        _drawGestureVisuals(ctx, rightHandLm, gestureOut, width, height);
 
         // Draw hand skeleton (gold — pitch hand)
         _drawHandSkeleton(ctx, rightHandLm, width, height, '#C9A84C', 0.5);
@@ -280,20 +225,18 @@ export const ThereminCore: React.FC<Props> = ({ onUpdate, timbres, settings, isR
         // Point of reference for octave is average of index, middle, ring, and pinky roots (MCPs)
         const octRefY = (leftHandLm[5].y + leftHandLm[9].y + leftHandLm[13].y + leftHandLm[17].y) / 4;
 
-        if (calibStep < 0) {
-          const octOut = octave.update(octRefY, timbresRef.current[0] || 'pureSine', span);
-          octBand = octOut.noteName;
+        const octOut = octave.update(octRefY, timbresRef.current[0] || 'pureSine', span);
+        octBand = octOut.noteName;
 
-          // Scale pitch to selected octave
-          if (freq > 0) {
-            freq = OctaveController.scaleToOctave(freq, octOut.baseFrequency);
-            // Update note name for scaled frequency
-            note = _freqToNote(freq);
-          }
-
-          // Draw octave band lines
-          _drawOctaveBands(ctx, octOut, span, width, height);
+        // Scale pitch to selected octave
+        if (freq > 0) {
+          freq = OctaveController.scaleToOctave(freq, octOut.baseFrequency);
+          // Update note name for scaled frequency
+          note = _freqToNote(freq);
         }
+
+        // Draw octave band lines
+        _drawOctaveBands(ctx, octOut, span, width, height);
 
         // Draw hand skeleton (forest — octave hand)
         _drawHandSkeleton(ctx, leftHandLm, width, height, '#3A6B43', 0.5);
@@ -306,7 +249,7 @@ export const ThereminCore: React.FC<Props> = ({ onUpdate, timbres, settings, isR
       }
 
       // ── Update audio ──
-      if (audio && audio.isRunning && calibStep < 0) {
+      if (audio && audio.isRunning) {
         // Frequency always updates (even during CUT, per spec)
         if (freq > 0) {
           audio.setFrequency(freq);
@@ -376,19 +319,17 @@ export const ThereminCore: React.FC<Props> = ({ onUpdate, timbres, settings, isR
       }
 
       // ── Draw: state indicator text ──
-      if (calibStep < 0) {
-        const stateColors: Record<string, string> = {
-          [GestureState.INACTIVE]: 'rgba(176,125,84,0.5)',
-          [GestureState.CUT]: 'rgba(125,28,58,0.7)',
-          [GestureState.ACTIVE]: 'rgba(201,168,76,0.8)',
-          [GestureState.FLICK_LOCK]: 'rgba(160,114,42,0.7)',
-        };
-        ctx.fillStyle = stateColors[gState] || 'rgba(176,125,84,0.5)';
-        ctx.font = 'bold 11px "Inter", sans-serif';
-        ctx.textAlign = 'left';
-        ctx.textBaseline = 'top';
-        ctx.fillText(gState, width - 100, 16);
-      }
+      const stateColors: Record<string, string> = {
+        [GestureState.INACTIVE]: 'rgba(176,125,84,0.5)',
+        [GestureState.CUT]: 'rgba(125,28,58,0.7)',
+        [GestureState.ACTIVE]: 'rgba(201,168,76,0.8)',
+        [GestureState.FLICK_LOCK]: 'rgba(160,114,42,0.7)',
+      };
+      ctx.fillStyle = stateColors[gState] || 'rgba(176,125,84,0.5)';
+      ctx.font = 'bold 11px "Inter", sans-serif';
+      ctx.textAlign = 'left';
+      ctx.textBaseline = 'top';
+      ctx.fillText(gState, width - 100, 16);
 
       ctx.restore();
       onUpdate(freq, vol, note, gState, octBand, pinchDist);
@@ -414,178 +355,7 @@ export const ThereminCore: React.FC<Props> = ({ onUpdate, timbres, settings, isR
     };
   }, []); // Runs ONCE
 
-  // ─── Calibration helpers ────────────────────────────────────
-  const _captureCalibSample = (vals: any, nowMs: number) => {
-    if (calibStartRef.current === 0) {
-      calibStartRef.current = nowMs;
-      calibSamplesRef.current = [];
-    }
-    calibSamplesRef.current.push(vals);
 
-    const step = CALIBRATION_STEPS[calibStep];
-    if (nowMs - calibStartRef.current >= step.duration) {
-      const samples = calibSamplesRef.current;
-
-      if (step.id === 'pitchMin' || step.id === 'pitchMax') {
-        const avgArea = samples.reduce((a: number, b: any) => a + (b.area || 0), 0) / samples.length;
-        const avgZ = samples.reduce((a: number, b: any) => a + (b.z || 0), 0) / samples.length;
-        calibDataRef.current[step.id === 'pitchMin' ? 'pitchMinArea' : 'pitchMaxArea'] = avgArea;
-        calibDataRef.current[step.id === 'pitchMin' ? 'pitchMinZ' : 'pitchMaxZ'] = avgZ;
-      }
-
-      calibStartRef.current = 0;
-      calibSamplesRef.current = [];
-
-      if (calibStep < CALIBRATION_STEPS.length - 1) {
-        setCalibStep(calibStep + 1);
-      } else {
-        _finalizeCalibration();
-      }
-    }
-  };
-
-  const _captureGestureCalibSample = (
-    lm: any[], tSec: number, nowMs: number,
-    w: number, h: number,
-  ) => {
-    if (calibStartRef.current === 0) {
-      calibStartRef.current = nowMs;
-    }
-
-    const step = CALIBRATION_STEPS[calibStep];
-    const gc = gestureCalibRef.current;
-
-    // Compute pinch distance
-    const thumb = lm[4];
-    const indexTip = lm[8];
-    const dx = (thumb.x - indexTip.x) * w;
-    const dy = (thumb.y - indexTip.y) * h;
-    const pinchDist = Math.sqrt(dx * dx + dy * dy);
-
-    // Compute finger avg Y and pinch anchor
-    const fingerAvgY = (lm[12].y + lm[16].y + lm[20].y) / 3;
-    const pinchAnchorY = (lm[4].y + lm[8].y) / 2;
-    const relativeY = fingerAvgY - pinchAnchorY;
-
-    if (step.id === 'pinchClosed') {
-      gc.pinchClosedSamples.push(pinchDist);
-    } else if (step.id === 'pinchOpen') {
-      gc.pinchOpenSamples.push(pinchDist);
-    } else if (step.id === 'drHigh') {
-      gc.drHighSamples.push(relativeY);
-    } else if (step.id === 'drLow') {
-      gc.drLowSamples.push(relativeY);
-    } else if (step.id === 'flickTest') {
-      // Track peak velocity during flick test
-      if (gc.flickPrevT > 0) {
-        const dt = tSec - gc.flickPrevT;
-        if (dt > 0 && dt < 1) {
-          const vel = (fingerAvgY - gc.flickPrevY) / dt;
-          // Detect peak: positive velocity = downward
-          if (vel > 1.0) {
-            // Check if this is a new peak (higher than last)
-            const lastPeak = gc.flickVelocities.length > 0
-              ? gc.flickVelocities[gc.flickVelocities.length - 1] : 0;
-            if (vel > lastPeak || gc.flickVelocities.length === 0) {
-              if (gc.flickVelocities.length < 3) {
-                gc.flickVelocities.push(vel);
-              } else {
-                // Replace the smallest
-                const minIdx = gc.flickVelocities.indexOf(Math.min(...gc.flickVelocities));
-                if (vel > gc.flickVelocities[minIdx]) {
-                  gc.flickVelocities[minIdx] = vel;
-                }
-              }
-            }
-          }
-        }
-      }
-      gc.flickPrevY = fingerAvgY;
-      gc.flickPrevT = tSec;
-    }
-
-    if (nowMs - calibStartRef.current >= step.duration) {
-      calibStartRef.current = 0;
-
-      if (calibStep < CALIBRATION_STEPS.length - 1) {
-        setCalibStep(calibStep + 1);
-      } else {
-        _finalizeCalibration();
-      }
-    }
-  };
-
-  const _finalizeCalibration = () => {
-    const gc = gestureCalibRef.current;
-
-    // Compute gesture calibration values
-    const pinchClosedAvg = gc.pinchClosedSamples.length > 0
-      ? gc.pinchClosedSamples.reduce((a, b) => a + b, 0) / gc.pinchClosedSamples.length
-      : 15;
-    const pinchOpenAvg = gc.pinchOpenSamples.length > 0
-      ? gc.pinchOpenSamples.reduce((a, b) => a + b, 0) / gc.pinchOpenSamples.length
-      : 60;
-    const drHighAvg = gc.drHighSamples.length > 0
-      ? gc.drHighSamples.reduce((a, b) => a + b, 0) / gc.drHighSamples.length
-      : -0.15;
-    const drLowAvg = gc.drLowSamples.length > 0
-      ? gc.drLowSamples.reduce((a, b) => a + b, 0) / gc.drLowSamples.length
-      : 0.15;
-
-    const gestureCalib = computeGestureCalibration(
-      pinchClosedAvg, pinchOpenAvg,
-      drHighAvg, drLowAvg,
-      gc.flickVelocities,
-    );
-
-    const data: CalibrationData = {
-      ...(calibDataRef.current as CalibrationData),
-      pinchThreshold: gestureCalib.pinchThreshold,
-      dynamicRange: gestureCalib.dynamicRange,
-      flickVelocityThreshold: gestureCalib.flickVelocityThreshold,
-    };
-
-    saveCalibration(data);
-    engineRef.current.setCalibration(data);
-    gestureRef.current.setCalibration(
-      gestureCalib.pinchThreshold,
-      gestureCalib.dynamicRange,
-      gestureCalib.flickVelocityThreshold,
-    );
-
-    // Reset
-    calibDataRef.current = {};
-    gestureCalibRef.current = {
-      pinchClosedSamples: [],
-      pinchOpenSamples: [],
-      drHighSamples: [],
-      drLowSamples: [],
-      flickVelocities: [],
-      flickPrevY: -1,
-      flickPrevT: 0,
-    };
-    setCalibStep(-1);
-  };
-
-  const startCalibration = useCallback(() => {
-    calibStartRef.current = 0;
-    calibSamplesRef.current = [];
-    calibDataRef.current = {};
-    gestureCalibRef.current = {
-      pinchClosedSamples: [],
-      pinchOpenSamples: [],
-      drHighSamples: [],
-      drLowSamples: [],
-      flickVelocities: [],
-      flickPrevY: -1,
-      flickPrevT: 0,
-    };
-    setCalibStep(0);
-  }, []);
-
-  const skipCalibration = useCallback(() => {
-    setCalibStep(-1);
-  }, []);
 
   return (
     <div style={{ position: 'relative', width: '100%', height: '100%' }}>
@@ -593,48 +363,19 @@ export const ThereminCore: React.FC<Props> = ({ onUpdate, timbres, settings, isR
         <video ref={videoRef} style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', objectFit: 'cover', opacity: 0, pointerEvents: 'none' }} playsInline />
         <canvas ref={canvasRef} width={1280} height={720} style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', objectFit: 'cover' }} />
 
-        {/* Calibration overlay */}
-        {calibStep >= 0 && calibStep < CALIBRATION_STEPS.length && (
-          <div style={{ position: 'absolute', inset: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', background: 'rgba(74,28,16,0.7)', backdropFilter: 'blur(8px)', zIndex: 30 }}>
-            <div style={{ background: 'rgba(250,247,240,0.95)', border: '2px solid var(--color-gold)', padding: 32, borderRadius: 24, textAlign: 'center', maxWidth: 420, boxShadow: 'var(--shadow-2xl)' }}>
-              <div style={{ fontFamily: 'var(--font-ui)', fontWeight: 600, fontSize: 10, textTransform: 'uppercase', letterSpacing: '0.15em', color: 'var(--color-gold)', marginBottom: 16 }}>
-                Calibration — Step {calibStep + 1} of {CALIBRATION_STEPS.length}
-              </div>
-              <p style={{ fontFamily: 'var(--font-display)', fontWeight: 700, fontSize: '1.1rem', color: 'var(--color-mahogany)', marginBottom: 16 }}>{CALIBRATION_STEPS[calibStep].instruction}</p>
-              <div style={{ width: '100%', height: 6, background: 'var(--color-parchment)', borderRadius: 999, overflow: 'hidden' }}>
-                <div style={{ height: '100%', borderRadius: 999, background: 'linear-gradient(90deg, var(--color-gold), var(--color-gold-light))', transition: 'width 100ms', width: calibStartRef.current > 0 ? `${Math.min(100, ((performance.now() - calibStartRef.current) / CALIBRATION_STEPS[calibStep].duration) * 100)}%` : '0%' }} />
-              </div>
-              <p style={{ fontFamily: 'var(--font-body)', fontStyle: 'italic', fontSize: 12, color: 'var(--color-cedar)', marginTop: 12 }}>Hold your hand steady...</p>
-              <button onClick={skipCalibration} style={{ marginTop: 20, fontFamily: 'var(--font-ui)', fontSize: 12, color: 'var(--color-cedar)', textDecoration: 'underline', background: 'none', border: 'none', cursor: 'pointer' }}>
-                Skip Calibration
-              </button>
-            </div>
-          </div>
-        )}
-
         {/* Zone labels */}
-        {calibStep < 0 && (
-          <div style={{ position: 'absolute', inset: 0, pointerEvents: 'none', zIndex: 10 }}>
-            <div style={{ position: 'absolute', top: 48, left: '50%', transform: 'translateX(-50%)' }}>
-              <div style={{ background: 'rgba(44,82,51,0.08)', color: 'rgba(58,107,67,0.5)', padding: '6px 16px', borderRadius: 999, fontSize: 9, fontFamily: 'var(--font-ui)', fontWeight: 700, letterSpacing: '0.1em', textTransform: 'uppercase', backdropFilter: 'blur(4px)', border: '1px solid rgba(44,82,51,0.15)' }}>
-                ↑ Left Hand High = High Octave &nbsp; Low = Low Octave ↓
-              </div>
-            </div>
-            <div style={{ position: 'absolute', top: '50%', right: 16, transform: 'translateY(-50%) rotate(90deg)', transformOrigin: 'center' }}>
-              <div style={{ background: 'rgba(201,168,76,0.08)', color: 'rgba(201,168,76,0.5)', padding: '6px 16px', borderRadius: 999, fontSize: 9, fontFamily: 'var(--font-ui)', fontWeight: 700, letterSpacing: '0.1em', textTransform: 'uppercase', backdropFilter: 'blur(4px)', border: '1px solid rgba(201,168,76,0.15)', whiteSpace: 'nowrap' }}>
-                ← Push Closer = High Pitch &nbsp; Pull Away = Low Pitch
-              </div>
+        <div style={{ position: 'absolute', inset: 0, pointerEvents: 'none', zIndex: 10 }}>
+          <div style={{ position: 'absolute', top: 48, left: '50%', transform: 'translateX(-50%)' }}>
+            <div style={{ background: 'rgba(44,82,51,0.08)', color: 'rgba(58,107,67,0.5)', padding: '6px 16px', borderRadius: 999, fontSize: 9, fontFamily: 'var(--font-ui)', fontWeight: 700, letterSpacing: '0.1em', textTransform: 'uppercase', backdropFilter: 'blur(4px)', border: '1px solid rgba(44,82,51,0.15)' }}>
+              ↑ Left Hand High = High Octave &nbsp; Low = Low Octave ↓
             </div>
           </div>
-        )}
-
-        {/* Calibrate button */}
-        {calibStep < 0 && (
-          <button onClick={startCalibration}
-            style={{ position: 'absolute', bottom: 16, left: 16, zIndex: 20, padding: '6px 12px', borderRadius: 8, background: 'rgba(250,247,240,0.7)', backdropFilter: 'blur(8px)', color: 'var(--color-cedar)', fontSize: 10, fontFamily: 'var(--font-ui)', fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.08em', border: '1px solid rgba(201,168,76,0.25)', cursor: 'pointer', transition: 'all 150ms' }}>
-            Calibrate
-          </button>
-        )}
+          <div style={{ position: 'absolute', top: '50%', right: 16, transform: 'translateY(-50%) rotate(90deg)', transformOrigin: 'center' }}>
+            <div style={{ background: 'rgba(201,168,76,0.08)', color: 'rgba(201,168,76,0.5)', padding: '6px 16px', borderRadius: 999, fontSize: 9, fontFamily: 'var(--font-ui)', fontWeight: 700, letterSpacing: '0.1em', textTransform: 'uppercase', backdropFilter: 'blur(4px)', border: '1px solid rgba(201,168,76,0.15)', whiteSpace: 'nowrap' }}>
+              ← Push Closer = High Pitch &nbsp; Pull Away = Low Pitch
+            </div>
+          </div>
+        </div>
       </div>
     </div>
   );

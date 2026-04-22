@@ -1,13 +1,21 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import { AuthPage } from './components/AuthPage';
 import { LandingPage } from './components/LandingPage';
 import { InstrumentPage } from './components/InstrumentPage';
+import { SoundDesigner } from './components/SoundDesigner';
 import { AuthUser } from './types';
+import { loadSavedInstruments } from './engine/timbres';
 
 const App: React.FC = () => {
-  const [view, setView] = useState<'landing' | 'instrument'>('landing');
+  const [view, setView] = useState<'landing' | 'instrument' | 'designer'>('landing');
   const [user, setUser] = useState<AuthUser | null>(null);
   const [authChecked, setAuthChecked] = useState(false);
+  const [selectedCustomTimbre, setSelectedCustomTimbre] = useState<string | null>(null);
+
+  // Load saved custom instruments on app boot so they're registered
+  useEffect(() => {
+    loadSavedInstruments();
+  }, []);
 
   // On mount, check for existing JWT in localStorage
   useEffect(() => {
@@ -46,6 +54,11 @@ const App: React.FC = () => {
     setView('landing');
   };
 
+  const handleSelectCustomInstrument = useCallback((timbreKey: string) => {
+    setSelectedCustomTimbre(timbreKey);
+    setView('instrument');
+  }, []);
+
   // Show nothing until we've checked auth status (prevents flash)
   if (!authChecked) {
     return (
@@ -67,9 +80,31 @@ const App: React.FC = () => {
   }
 
   // Logged in → show app
-  return view === 'landing'
-    ? <LandingPage onLaunch={() => setView('instrument')} user={user} onLogout={handleLogout} />
-    : <InstrumentPage onExit={() => setView('landing')} user={user} onLogout={handleLogout} />;
+  if (view === 'designer') {
+    return (
+      <SoundDesigner
+        onExit={() => setView('instrument')}
+        user={user}
+        onLogout={handleLogout}
+        onSelectInstrument={handleSelectCustomInstrument}
+      />
+    );
+  }
+
+  if (view === 'instrument') {
+    return (
+      <InstrumentPage
+        onExit={() => setView('landing')}
+        onOpenDesigner={() => setView('designer')}
+        user={user}
+        onLogout={handleLogout}
+        initialCustomTimbre={selectedCustomTimbre}
+        onCustomTimbreConsumed={() => setSelectedCustomTimbre(null)}
+      />
+    );
+  }
+
+  return <LandingPage onLaunch={() => setView('instrument')} user={user} onLogout={handleLogout} />;
 };
 
 export default App;

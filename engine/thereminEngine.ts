@@ -1,29 +1,14 @@
 /**
- * Theremin Mapping Engine v10 — Gesture System
+ * Theremin Mapping Engine v11 — Auto-Range Only
  * ═════════════════════════════════════════════
  *
- * Changes from v9:
- *  - Volume mapping REMOVED (now handled by GestureController)
- *  - Pitch filter params updated: minCutoff=1.5, beta=0.007
- *  - Volume filter REMOVED
- *  - Volume auto-range REMOVED
+ * Changes from v10:
+ *  - Manual calibration REMOVED entirely
+ *  - Engine now exclusively uses auto-ranging
  *  - All palm area / Z fusion pitch logic preserved exactly
  */
 
 import { OneEuroFilter } from './oneEuroFilter';
-
-// ── Musical constants ──────────────────────────────────────────
-export interface CalibrationData {
-  pitchMinArea: number;
-  pitchMaxArea: number;
-  pitchMinZ: number;
-  pitchMaxZ: number;
-  // v10: volume calibration removed (handled by GestureController)
-  // v10: new gesture calibration fields
-  pinchThreshold?: number;
-  dynamicRange?: number;
-  flickVelocityThreshold?: number;
-}
 
 const MIN_FREQ = 130.81;  // C3 (3rd Octave start)
 const MAX_FREQ = 261.63;  // C4 (4th Octave start — exactly one octave range)
@@ -44,7 +29,6 @@ export class ThereminEngine {
   private pitchFilter: OneEuroFilter;
 
   private fieldExponent = 1.2;
-  private calibration: CalibrationData | null = null;
 
   // Auto-range trackers (pitch only)
   private autoMinArea = Infinity;
@@ -72,7 +56,7 @@ export class ThereminEngine {
     this.pitchFilter = new OneEuroFilter(0.4, 0.003, 1.0);
   }
 
-  setCalibration(c: CalibrationData | null) { this.calibration = c; }
+
   setFieldExponent(e: number) { this.fieldExponent = e < 0.5 ? 0.5 : e > 3.0 ? 3.0 : e; }
 
   /**
@@ -117,39 +101,31 @@ export class ThereminEngine {
     let normArea: number;
     let normZ: number;
 
-    if (this.calibration) {
-      const c = this.calibration;
-      const aRange = c.pitchMaxArea - c.pitchMinArea;
-      normArea = aRange > 100 ? (area - c.pitchMinArea) / aRange : 0.5;
-      const zRange = c.pitchMaxZ - c.pitchMinZ;
-      normZ = zRange > 0.01 ? (avgZ - c.pitchMinZ) / zRange : 0.5;
-    } else {
-      // Auto-range: fast attack, 0.003 decay (~1.5s adapt)
-      this.autoSamples++;
+    // Auto-range: fast attack, 0.003 decay (~1.5s adapt)
+    this.autoSamples++;
 
-      if (area > 0) {
-        if (area < this.autoMinArea) this.autoMinArea = area;
-        else this.autoMinArea += (area - this.autoMinArea) * 0.003;
-        if (area > this.autoMaxArea) this.autoMaxArea = area;
-        else this.autoMaxArea += (area - this.autoMaxArea) * 0.003;
-      }
-
-      if (avgZ < this.autoMinZ && avgZ > -5) this.autoMinZ = avgZ;
-      else this.autoMinZ += (avgZ - this.autoMinZ) * 0.003;
-      if (avgZ > this.autoMaxZ && avgZ < 5) this.autoMaxZ = avgZ;
-      else this.autoMaxZ += (avgZ - this.autoMaxZ) * 0.003;
-
-      const settled = this.autoSamples > 25;
-      const aMin = settled ? this.autoMinArea : 2000;
-      const aMax = settled ? this.autoMaxArea : 30000;
-      const zMin = settled ? this.autoMinZ : -0.15;
-      const zMax = settled ? this.autoMaxZ : 0.15;
-
-      const aRange = aMax - aMin;
-      normArea = (area - aMin) / (aRange > 2000 ? aRange : 2000);
-      const zRange = zMax - zMin;
-      normZ = (avgZ - zMin) / (zRange > 0.03 ? zRange : 0.03);
+    if (area > 0) {
+      if (area < this.autoMinArea) this.autoMinArea = area;
+      else this.autoMinArea += (area - this.autoMinArea) * 0.003;
+      if (area > this.autoMaxArea) this.autoMaxArea = area;
+      else this.autoMaxArea += (area - this.autoMaxArea) * 0.003;
     }
+
+    if (avgZ < this.autoMinZ && avgZ > -5) this.autoMinZ = avgZ;
+    else this.autoMinZ += (avgZ - this.autoMinZ) * 0.003;
+    if (avgZ > this.autoMaxZ && avgZ < 5) this.autoMaxZ = avgZ;
+    else this.autoMaxZ += (avgZ - this.autoMaxZ) * 0.003;
+
+    const settled = this.autoSamples > 25;
+    const aMin = settled ? this.autoMinArea : 2000;
+    const aMax = settled ? this.autoMaxArea : 30000;
+    const zMin = settled ? this.autoMinZ : -0.15;
+    const zMax = settled ? this.autoMaxZ : 0.15;
+
+    const aRange = aMax - aMin;
+    normArea = (area - aMin) / (aRange > 2000 ? aRange : 2000);
+    const zRange = zMax - zMin;
+    normZ = (avgZ - zMin) / (zRange > 0.03 ? zRange : 0.03);
 
     // Inline clamp [0, 1]
     if (normArea < 0) normArea = 0; else if (normArea > 1) normArea = 1;
