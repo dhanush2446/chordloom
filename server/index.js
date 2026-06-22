@@ -28,7 +28,9 @@ app.get('/api/health', (_req, res) => {
 });
 
 // ── MongoDB Connection (only for local dev) ─────────────────
-if (!process.env.VERCEL) {
+import { fileURLToPath } from 'url';
+
+if (process.argv[1] === fileURLToPath(import.meta.url)) {
   const MONGODB_URI = process.env.MONGODB_URI;
 
   if (!MONGODB_URI) {
