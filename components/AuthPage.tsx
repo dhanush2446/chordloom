@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { API_URL } from '../config/api';
 
 interface AuthUser {
@@ -19,6 +19,64 @@ export const AuthPage: React.FC<Props> = ({ onAuth }) => {
   const [showPassword, setShowPassword] = useState(false);
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
+
+  useEffect(() => {
+    const initGoogleSignIn = () => {
+      const google = (window as any).google;
+      const clientId = import.meta.env.VITE_GOOGLE_CLIENT_ID;
+
+      if (google && clientId && clientId !== 'YOUR_GOOGLE_CLIENT_ID.apps.googleusercontent.com') {
+        google.accounts.id.initialize({
+          client_id: clientId,
+          callback: handleGoogleCallback,
+        });
+
+        const btnElement = document.getElementById('google-signin-btn');
+        if (btnElement) {
+          google.accounts.id.renderButton(btnElement, {
+            theme: 'outline',
+            size: 'large',
+            width: btnElement.clientWidth || 320,
+            text: mode === 'login' ? 'signin_with' : 'signup_with',
+          });
+        }
+      }
+    };
+
+    let checkInterval = setInterval(() => {
+      if ((window as any).google) {
+        initGoogleSignIn();
+        clearInterval(checkInterval);
+      }
+    }, 200);
+
+    return () => clearInterval(checkInterval);
+  }, [mode]);
+
+  const handleGoogleCallback = async (response: any) => {
+    setLoading(true);
+    setError('');
+
+    try {
+      const res = await fetch(`${API_URL}/api/auth/google`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ credential: response.credential }),
+      });
+
+      const data = await res.json();
+
+      if (!res.ok) {
+        throw new Error(data.error || 'Google authentication failed');
+      }
+
+      onAuth(data.user, data.token);
+    } catch (err: any) {
+      setError(err.message || 'Google Sign-in failed. Please try again.');
+    } finally {
+      setLoading(false);
+    }
+  };
 
   const switchMode = () => {
     setMode(mode === 'login' ? 'register' : 'login');
@@ -191,6 +249,12 @@ export const AuthPage: React.FC<Props> = ({ onAuth }) => {
             )}
           </button>
         </form>
+
+        <div className="auth-divider">
+          <span>or</span>
+        </div>
+
+        <div id="google-signin-btn" className="google-signin-btn"></div>
 
         {/* Toggle mode */}
         <p className="auth-switch">

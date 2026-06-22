@@ -1,10 +1,13 @@
 import { Router } from 'express';
 import jwt from 'jsonwebtoken';
 import User from '../models/User.js';
+import { OAuth2Client } from 'google-auth-library';
 
 const router = Router();
 const JWT_SECRET = process.env.JWT_SECRET || 'chord-loom-fallback-secret';
 const JWT_EXPIRES = '7d';
+
+const client = new OAuth2Client(process.env.GOOGLE_CLIENT_ID);
 
 /**
  * Generate a signed JWT for a user.
@@ -137,6 +140,63 @@ router.get('/me', async (req, res) => {
     }
     console.error('Auth check error:', err);
     res.status(500).json({ error: 'Server error' });
+  }
+});
+
+/**
+ * POST /api/auth/google
+ * Authenticate or register a user using a Google ID token.
+ *
+ * Body: { credential }
+ */
+router.post('/google', async (req, res) => {
+  try {
+    const { credential } = req.body;
+    if (!credential) {
+      return res.status(400).json({ error: 'Google credential token is required' });
+    }
+
+    // Verify token with Google
+    const ticket = await client.verifyIdToken({
+      idToken: credential,
+      audience: process.env.GOOGLE_CLIENT_ID,
+    });
+
+    const payload = ticket.getPayload();
+    if (!payload) {
+      return res.status(400).json({ error: 'Invalid Google token payload' });
+    }
+
+    const { email, name } = payload;
+    if (!email) {
+      return res.status(400).json({ error: 'Google account does not provide an email' });
+    }
+
+    // Find or create user
+    let user = await User.findOne({ email: email.toLowerCase() });
+    if (!user) {
+      // Create new user with random password since it is a required field
+      const randomPassword = Math.random().toString(36).slice(-10) + Math.random().toString(36).slice(-10);
+      user = await User.create({
+        name: name || 'Google User',
+        email: email.toLowerCase(),
+        password: randomPassword,
+      });
+    }
+
+    const token = signToken(user);
+
+    res.json({
+      token,
+      user: {
+        id: user._id,
+        name: user.name,
+        email: user.email,
+      },
+    });
+  } catch (err) {
+    console.error('Google registration/login error:', err);
+    res.status(500).json({ error: 'Google authentication failed' });
   }
 });
 

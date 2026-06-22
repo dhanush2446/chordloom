@@ -2097,6 +2097,41 @@ ol {
   color: var(--color-brass);
 }
 
+/* Divider */
+.auth-divider {
+  display: flex;
+  align-items: center;
+  text-align: center;
+  margin: var(--space-3) 0;
+  color: var(--color-oak);
+  font-family: var(--font-ui);
+  font-size: var(--text-caption);
+  opacity: 0.6;
+}
+
+.auth-divider::before,
+.auth-divider::after {
+  content: '';
+  flex: 1;
+  border-bottom: 1px solid rgba(201, 168, 76, 0.2);
+}
+
+.auth-divider:not(:empty)::before {
+  margin-right: .5em;
+}
+
+.auth-divider:not(:empty)::after {
+  margin-left: .5em;
+}
+
+/* Google Button Wrapper */
+.google-signin-btn {
+  display: flex;
+  justify-content: center;
+  width: 100%;
+  min-height: 40px;
+}
+
 /* Footer note */
 .auth-footer-note {
   display: flex;
