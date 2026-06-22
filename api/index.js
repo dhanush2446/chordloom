@@ -10,8 +10,7 @@ const connectDB = async () => {
   
   const MONGODB_URI = process.env.MONGODB_URI;
   if (!MONGODB_URI) {
-    console.error('❌ MONGODB_URI is not set in environment variables');
-    return;
+    throw new Error('MONGODB_URI is not set in Vercel environment variables. Please add it to your Vercel project settings.');
   }
   
   try {
@@ -25,9 +24,14 @@ const connectDB = async () => {
 };
 
 export default async function handler(req, res) {
-  // Ensure DB is connected before handling the request
-  await connectDB();
-  
-  // Forward the request and response to the Express app
-  return app(req, res);
+  try {
+    // Ensure DB is connected before handling the request
+    await connectDB();
+    
+    // Forward the request and response to the Express app
+    return app(req, res);
+  } catch (error) {
+    console.error('Vercel Handler Error:', error);
+    return res.status(500).json({ error: 'Serverless Function Error', details: error.message });
+  }
 }
