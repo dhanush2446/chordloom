@@ -37,7 +37,7 @@ export const AuthPage: React.FC<Props> = ({ onAuth }) => {
             theme: 'outline',
             size: 'large',
             width: btnElement.clientWidth || 320,
-            text: mode === 'login' ? 'signin_with' : 'signup_with',
+            text: 'continue_with',
           });
         }
       }
