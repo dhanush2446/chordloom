@@ -175,10 +175,15 @@ router.post('/google', async (req, res) => {
     // Find or create user
     let user = await User.findOne({ email: email.toLowerCase() });
     if (!user) {
+      // Ensure name meets Mongoose validation (2 to 50 chars)
+      let safeName = name || 'Google User';
+      if (safeName.length < 2) safeName += ' User';
+      if (safeName.length > 50) safeName = safeName.substring(0, 50);
+
       // Create new user with random password since it is a required field
       const randomPassword = Math.random().toString(36).slice(-10) + Math.random().toString(36).slice(-10);
       user = await User.create({
-        name: name || 'Google User',
+        name: safeName,
         email: email.toLowerCase(),
         password: randomPassword,
       });
@@ -196,7 +201,7 @@ router.post('/google', async (req, res) => {
     });
   } catch (err) {
     console.error('Google registration/login error:', err);
-    res.status(500).json({ error: 'Google authentication failed' });
+    res.status(500).json({ error: `Google auth failed: ${err.message || 'Unknown error'}` });
   }
 });
 
