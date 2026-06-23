@@ -6,11 +6,11 @@ export default defineConfig(({ mode }) => {
     const env = loadEnv(mode, '.', '');
     return {
       server: {
-        port: 3000,
+        port: 3001,
         host: '0.0.0.0',
         proxy: {
           '/api': {
-            target: 'http://127.0.0.1:5000',
+            target: 'http://127.0.0.1:3002',
             changeOrigin: true,
           },
         },
