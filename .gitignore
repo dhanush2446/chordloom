@@ -7,12 +7,27 @@ yarn-error.log*
 pnpm-debug.log*
 lerna-debug.log*
 
+# Dependencies
 node_modules
+server/node_modules
+
+# Build output
 dist
 dist-ssr
-*.local
+
+# Environment variables (NEVER commit secrets)
+.env
 server/.env
-server/node_modules
+*.local
+
+# Large media files
+*.mp4
+*.wav
+*.mp3
+
+# Dev artifacts
+benchmark_jitter
+sample file
 
 # Editor directories and files
 .vscode/*
@@ -24,3 +39,6 @@ server/node_modules
 *.njsproj
 *.sln
 *.sw?
+
+# OS files
+Thumbs.db
