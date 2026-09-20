@@ -60,35 +60,35 @@ Chord Loom is a **browser-based virtual theremin** that uses your webcam and han
 
 ```
 ┌────────────────────────────────────────────────────────────────┐
-│                    Frontend (React + Vite + TypeScript)         │
+│                    Frontend (React + Vite + TypeScript)        │
 │                                                                │
-│  ┌────────────┐   ┌─────────────────┐   ┌──────────────────┐  │
-│  │Landing Page│   │ Instrument Page  │   │  Sound Designer  │  │
-│  │ (marketing)│   │   (main play)   │   │ (custom timbres) │  │
-│  └────────────┘   └────────┬────────┘   └──────────────────┘  │
+│  ┌────────────┐   ┌─────────────────┐   ┌──────────────────┐   │
+│  │Landing Page│   │ Instrument Page │   │  Sound Designer  │   │
+│  │ (marketing)│   │   (main play)   │   │ (custom timbres) │   │
+│  └────────────┘   └────────┬────────┘   └──────────────────┘   │
 │                            │                                   │
-│               ┌────────────┼─────────────┐                    │
-│               ▼            ▼             ▼                    │
-│        ┌───────────┐  ┌──────────┐  ┌──────────┐             │
-│        │MediaPipe   │  │ Gesture  │  │  Audio   │             │
-│        │Hand Track  │  │Controller│  │ Engine   │             │
-│        │(21 points) │  │(state m.)│  │(Web Audio│             │
-│        └─────┬─────┘  └────┬─────┘  └────┬─────┘             │
+│               ┌────────────┼─────────────┐                     │
+│               ▼            ▼             ▼                     │
+│        ┌───────────┐  ┌──────────┐  ┌───────────┐              │
+│        │MediaPipe  │  │ Gesture  │  │  Audio    │              │
+│        │Hand Track │  │Controller│  │ Engine    │              │
+│        │(21 points)│  │(state m.)│  │(Web Audio)│              │
+│        └─────┬─────┘  └─────┬─────┘ └─────┬─────┘              │
 │              │              │             │                    │
 │              ▼              ▼             ▼                    │
-│        ┌──────────────────────────────────────────┐           │
-│        │  ThereminEngine (pitch mapping + fusion)  │           │
-│        │  Shoelace Area · Z-Depth · 1€ Filter      │           │
-│        └──────────────────────────────────────────┘           │
+│        ┌──────────────────────────────────────────┐            │
+│        │  ThereminEngine (pitch mapping + fusion) │            │
+│        │  Shoelace Area · Z-Depth · 1€ Filter     │            │
+│        └──────────────────────────────────────────┘            │
 └────────────────────────────────────────────────────────────────┘
                              │  /api/* proxy
                              ▼
 ┌────────────────────────────────────────────────────────────────┐
-│                 Backend (Express + Mongoose)                    │
+│                 Backend (Express + Mongoose)                   │
 │                                                                │
-│    Auth: register / login / Google OAuth / JWT verify           │
-│    Recordings: CRUD with cloud storage in MongoDB Atlas         │
-│    Deploy: Vercel Serverless Functions                          │
+│    Auth: register / login / Google OAuth / JWT verify          │
+│    Recordings: CRUD with cloud storage in MongoDB Atlas        │
+│    Deploy: Vercel Serverless Functions                         │
 └────────────────────────────────────────────────────────────────┘
 ```
 
