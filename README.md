@@ -328,7 +328,7 @@ MIT License — see [LICENSE](LICENSE) for details.
 
 <div align="center">
 
-**Built with ❤️ and 🎶 **
+**Built with ❤️ and 🎶**
 
 *No instruments were harmed in the making of this project.*
 
