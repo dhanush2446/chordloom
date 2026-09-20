@@ -17,7 +17,7 @@
 
 **🏆 Hackathon Submission**
 
-[🌐 Live Demo](https://chord-loom.vercel.app) &nbsp;|&nbsp; [📹 Demo Video](https://youtu.be/your-demo-link) &nbsp;|&nbsp; [🎨 Devpost](https://devpost.com/software/chord-loom)
+[🌐 Live Demo](https://chord-loom.vercel.app) &nbsp;|&nbsp; [📹 Demo Video](https://youtu.be/wr59hrBEhA8) &nbsp;|&nbsp; [🎨 Devpost](https://devpost.com/software/chord-loom)
 
 </div>
 
