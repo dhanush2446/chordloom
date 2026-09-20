@@ -316,6 +316,7 @@ Musical expression requires instant response. We eliminated all debounce frames 
 | Name | Role |
 |------|------|
 | **Dhanush Varma** | Full-Stack Developer |
+| **Katta Hanok**   | Full-Stack Developer |
 
 ---
 
@@ -327,7 +328,7 @@ MIT License — see [LICENSE](LICENSE) for details.
 
 <div align="center">
 
-**Built with ❤️ and 🎶 at [Hackathon Name]**
+**Built with ❤️ and 🎶 **
 
 *No instruments were harmed in the making of this project.*
 
